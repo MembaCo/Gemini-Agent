@@ -34,17 +34,19 @@ positions_lock = threading.RLock()
 
 try:
     llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0.1)
+    
     agent_tools = [get_market_price, get_technical_indicators, get_open_positions_from_exchange, execute_trade_order, get_atr_value]
     prompt_template = hub.pull("hwchase17/react")
     agent = create_react_agent(llm=llm, tools=agent_tools, prompt=prompt_template)
     agent_executor = AgentExecutor(
         agent=agent, tools=agent_tools, verbose=strtobool(os.getenv("AGENT_VERBOSE", "True")),
         handle_parsing_errors="Lütfen JSON formatında geçerli bir yanıt ver.",
-        max_iterations=7
+        max_iterations=5
     )
 except Exception as e:
-    logging.critical(f"Agent başlatılırken hata oluştu: {e}")
+    logging.critical(f"LLM veya Agent başlatılırken hata oluştu: {e}")
     exit()
+
 
 def save_positions_to_file():
     with positions_lock:
@@ -70,16 +72,89 @@ def load_positions_from_file():
                 logging.error(f"HATA: Pozisyon dosyası ({POSITIONS_FILE}) okunamadı: {e}")
                 open_positions_managed_by_bot = []
 
-def create_analysis_prompt(user_query: str, market_type: str, timeframe: str) -> str:
-    symbol = _get_unified_symbol(user_query)
+def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indicators: dict) -> str:
+    indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in indicators.items()])
     return f"""
     Sen, uzman bir trading analistisin.
-    Hedefin: '{symbol}' için '{timeframe}' zaman aralığında piyasayı analiz etmek ve tek bir JSON çıktısı üretmek.
-    İŞ AKIŞI:
-    1. `get_market_price` ve `get_technical_indicators` ile veri topla.
-    2. Verileri analiz ederek 'AL', 'SAT' veya 'BEKLE' kararı ver.
-    3. Nihai JSON raporunu oluştur.
+    Aşağıda sana '{symbol}' adlı kripto para için '{timeframe}' zaman aralığında toplanmış veriler sunulmuştur.
+
+    GÖREVİN: Bu verileri analiz ederek 'AL', 'SAT' veya 'BEKLE' şeklinde net bir tavsiye kararı ver.
+    Kararını ve gerekçeni, aşağıda formatı verilen JSON çıktısı olarak sun. Başka hiçbir açıklama yapma.
+
+    SAĞLANAN VERİLER:
+    - Anlık Fiyat: {price}
+    Teknik Göstergeler:
+    {indicator_text}
+
+    İSTENEN JSON ÇIKTI FORMATI:
+    ```json
+    {{
+      "symbol": "{symbol}",
+      "timeframe": "{timeframe}",
+      "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
+      "reason": "Kararının kısa ve net gerekçesi.",
+      "data": {{
+        "price": {price}
+      }}
+    }}
+    ```
     """
+
+def handle_new_analysis():
+    with positions_lock:
+        if len(open_positions_managed_by_bot) >= config.MAX_CONCURRENT_TRADES:
+            print("\n### UYARI: Maksimum pozisyon limitine ulaşıldı. ###")
+            return
+
+    timeframe = input(f"Zaman aralığı seçin (örn: 15m, 1h) [varsayılan: 1h]: ").lower().strip() or "1h"
+    user_input = input(f"Analiz edilecek kripto parayı girin (örn: BTC): ")
+    if not user_input: return
+    
+    unified_symbol = _get_unified_symbol(user_input)
+    print(f"\nVeriler toplanıyor ve yapay zeka analiz yapıyor ({unified_symbol})...")
+
+    try:
+        price_str = get_market_price.invoke({"symbol": unified_symbol})
+        if "HATA" in price_str:
+            print(f"HATA: Fiyat bilgisi alınamadı. {price_str}")
+            return
+        current_price = float(re.search(r'[\d\.]+$', price_str).group())
+
+        indicators_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{unified_symbol},{timeframe}"})
+        if indicators_result.get("status") != "success":
+            print(f"HATA: Teknik göstergeler alınamadı. {indicators_result.get('message')}")
+            return
+        
+        indicators_data = indicators_result["data"]
+        final_prompt = create_final_analysis_prompt(unified_symbol, timeframe, current_price, indicators_data)
+        
+        result = llm.invoke(final_prompt)
+        parsed_data = parse_agent_response(result.content)
+
+        if not parsed_data:
+            print("\n--- HATA: Yapay zekadan geçerli bir JSON yanıtı alınamadı. Yanıt: ---")
+            print(result.content)
+            return
+
+        print("\n--- Analiz Raporu ---")
+        print(json.dumps(parsed_data, indent=2, ensure_ascii=False))
+
+        recommendation = parsed_data.get("recommendation")
+        if recommendation in ["AL", "SAT"]:
+            price_from_report = parsed_data.get('data', {}).get('price', current_price)
+            handle_trade_confirmation(
+                recommendation=recommendation,
+                trade_symbol=parsed_data.get('symbol'),
+                current_price=price_from_report,
+                timeframe=timeframe,
+                parsed_data=parsed_data
+            )
+        else:
+            print("\n--- Bir işlem tavsiyesi ('AL' veya 'SAT') bulunamadı. ---")
+
+    except Exception as e:
+        print(f"\n--- KRİTİK HATA: Analiz sırasında bir sorun oluştu. ---")
+        logging.error(f"handle_new_analysis hatası: {e}", exc_info=True)
 
 def create_reanalysis_prompt(position: dict) -> str:
     symbol = position.get("symbol")
@@ -131,7 +206,6 @@ Yukarıdaki {len(market_data_batch)} sembolün her birini yeni ve kapsamlı kura
 ```"""
     return prompt_header + data_section + prompt_footer
 
-
 def check_and_manage_positions_thread_safe():
     global open_positions_managed_by_bot
     positions_to_close = []
@@ -151,9 +225,14 @@ def check_and_manage_positions_thread_safe():
                 positions_to_close.append((i, position))
         except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
             logging.error(f"[AUTO-HATA] Pozisyon kontrolü sırasında hata: {e} - Pozisyon: {position}")
+    
     for index, pos_to_close in sorted(positions_to_close, reverse=True):
         close_side = 'sell' if pos_to_close['side'] == 'buy' else 'buy'
-        execute_trade_order.invoke({"symbol": pos_to_close['symbol'], "side": close_side, "amount": pos_to_close['amount']})
+        execute_trade_order.invoke({
+            "symbol": pos_to_close['symbol'], 
+            "side": close_side, 
+            "amount": pos_to_close['amount']
+        })
         with positions_lock:
             if index < len(open_positions_managed_by_bot) and open_positions_managed_by_bot[index] == pos_to_close:
                 open_positions_managed_by_bot.pop(index)
@@ -162,7 +241,6 @@ def check_and_manage_positions_thread_safe():
 
 
 def sync_and_display_positions():
-    """Borsadaki pozisyonlarla botun hafızasını senkronize eder ve PNL'i doğru hesaplayarak gösterir."""
     global open_positions_managed_by_bot
     print("\n--- Borsadaki Açık Pozisyonlar Senkronize Ediliyor... ---")
     try:
@@ -201,9 +279,6 @@ def sync_and_display_positions():
                     add_to_bot = input(f"      >>> Bu pozisyon bot tarafından yönetilmiyor. Yönetime eklensin mi? (evet/hayır): ").lower()
                     if add_to_bot == 'evet':
                         timeframe = input(f"      >>> Orijinal zaman aralığını girin (örn: 1h, 15m): ").lower().strip() or "1h"
-                        
-                        # === DEĞİŞİKLİK BURADA ===
-                        # `get` ile gelen `None` değerini `or` ile yakalayıp varsayılan değeri atıyoruz.
                         leverage = float(pos_data.get('leverage') or config.LEVERAGE)
                         
                         managed_position = {
@@ -220,8 +295,7 @@ def sync_and_display_positions():
     except Exception as e:
         logging.error(f"Senkronizasyon sırasında hata oluştu: {e}")
         import traceback
-        traceback.print_exc() # Hatanın tam traceback'ini görmek için
-
+        traceback.print_exc()
 
 def _execute_single_scan_cycle():
     logging.info("--- Yeni Tarama Döngüsü Başlatılıyor ---")
@@ -279,8 +353,8 @@ def _execute_single_scan_cycle():
 
         logging.info(f"Toplam {len(market_data_batch)} sembol için toplu analiz isteği gönderiliyor...")
         batch_prompt = create_batch_analysis_prompt(market_data_batch)
-        result = agent_executor.invoke({"input": batch_prompt})
-        recommendations = parse_agent_response(result.get("output", ""))
+        result = llm.invoke(batch_prompt)
+        recommendations = parse_agent_response(result.content)
 
         if not recommendations or not isinstance(recommendations, list):
             logging.error(f"Toplu analizden geçerli bir yanıt alınamadı: {recommendations}")
@@ -321,7 +395,6 @@ def _execute_single_scan_cycle():
     logging.info("--- Tarama Döngüsü Tamamlandı. ---")
 
 
-# ... (Dosyanın geri kalanı aynı, değişiklik yok) ...
 def run_proactive_scanner():
     logging.info("🚀 PROAKTİF TARAMA MODU BAŞLATILDI 🚀")
     if config.PROACTIVE_SCAN_IN_LOOP:
@@ -337,10 +410,14 @@ def parse_agent_response(response: str) -> dict:
     if not response or not isinstance(response, str):
         return None
     try:
-        if "Final Answer:" in response:
-            response = response.split("Final Answer:")[1]
+        if response.strip().lower().startswith("json"):
+            response = response.strip()[4:]
+
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0]
+        elif "```" in response:
+            response = response.split("```")[1].split("```")[0]
+            
         return json.loads(response.strip())
     except (json.JSONDecodeError, IndexError):
         logging.error(f"JSON ayrıştırma hatası. Gelen Yanıt: {response}")
@@ -351,7 +428,7 @@ def handle_trade_confirmation(recommendation, trade_symbol, current_price, timef
         logging.error(f"Geçersiz fiyat bilgisi ({current_price}), işlem iptal edildi.")
         return
 
-    prompt_message = f">>> [FIRSAT] {trade_symbol} @ {current_price} için '{recommendation}' tavsiyesi verildi. İşlem açılsın mı? (evet/hayır): "
+    prompt_message = f">>> [FIRSAT] {trade_symbol} @ {current_price:.4f} için '{recommendation}' tavsiyesi verildi. İşlem açılsın mı? (evet/hayır): "
     user_onay = "evet" if auto_confirm else input(prompt_message).lower()
     
     if user_onay == "evet":
@@ -401,7 +478,9 @@ def handle_trade_confirmation(recommendation, trade_symbol, current_price, timef
             result_str = execute_trade_order.invoke(position_to_open)
             print(f"İşlem Sonucu: {result_str}")
 
-            if "başarılı" in result_str.lower() or "simülasyon" in result_str.lower():
+            # === DEĞİŞİKLİK BURADA ===
+            # Kontrolü daha esnek hale getiriyoruz.
+            if "başarı" in result_str.lower() or "simülasyon" in result_str.lower():
                 final_entry_price = limit_price if limit_price else current_price
                 managed_position_details = {
                     "symbol": trade_symbol, "side": trade_side, "amount": trade_amount, 
@@ -418,47 +497,6 @@ def handle_trade_confirmation(recommendation, trade_symbol, current_price, timef
 
         except Exception as e:
             logging.error(f"İşlem hazırlığı sırasında bir hata oluştu: {e}", exc_info=True)
-
-def handle_new_analysis():
-    with positions_lock:
-        if len(open_positions_managed_by_bot) >= config.MAX_CONCURRENT_TRADES:
-            print("\n### UYARI: Maksimum pozisyon limitine ulaşıldı. ###")
-            return
-    timeframe = input(f"Zaman aralığı seçin (örn: 15m, 1h) [varsayılan: 1h]: ").lower().strip() or "1h"
-    user_input = input(f"Analiz edilecek kripto parayı girin (örn: BTC): ")
-    if not user_input: return
-    
-    print("\nYapay zeka analiz yapıyor, lütfen bekleyin...")
-    analysis_prompt = create_analysis_prompt(user_input, config.DEFAULT_MARKET_TYPE, timeframe)
-    result = agent_executor.invoke({"input": analysis_prompt})
-    parsed_data = parse_agent_response(result.get("output", ""))
-    
-    if not parsed_data:
-        print("\n--- HATA: Agent'tan geçerli bir yanıt alınamadı. ---")
-        return
-
-    print("\n--- Analiz Raporu ---")
-    print(json.dumps(parsed_data, indent=2, ensure_ascii=False))
-    
-    recommendation = parsed_data.get("recommendation")
-    if recommendation in ["AL", "SAT"]:
-        try:
-            price_str = get_market_price.invoke({"symbol": parsed_data.get('symbol')})
-            if "HATA" in price_str:
-                raise ValueError("Piyasa fiyatı alınamadı.")
-            price = float(re.search(r'[\d\.]+$', price_str).group())
-            handle_trade_confirmation(
-                recommendation=recommendation, 
-                trade_symbol=parsed_data.get('symbol'), 
-                current_price=price,
-                timeframe=timeframe,
-                parsed_data=parsed_data 
-            )
-        except (TypeError, ValueError) as e:
-            print(f"\n--- HATA: Analiz yanıtında veya fiyatta sorun var. {e} ---")
-    else:
-        print("\n--- Bir işlem tavsiyesi ('AL' veya 'SAT') bulunamadı. ---")
-
 
 def handle_manage_position():
     global open_positions_managed_by_bot
@@ -508,7 +546,7 @@ def handle_manual_close(position, index):
             "amount": position['amount']
         })
         print(f"Kapatma Sonucu: {result}")
-        if "başarılı" in result.lower() or "simülasyon" in result.lower():
+        if "başarı" in result.lower() or "simülasyon" in result.lower():
             with positions_lock:
                 if index < len(open_positions_managed_by_bot) and open_positions_managed_by_bot[index] == position:
                     open_positions_managed_by_bot.pop(index)
