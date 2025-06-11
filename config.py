@@ -1,6 +1,9 @@
 # config.py
 # @author: Memba Co.
 
+# === UYGULAMA VERSİYONU ===
+APP_VERSION = "1.0.0"
+
 # === YAPAY ZEKA MODEL AYARI ===
 # Botun analiz ve karar verme için kullanacağı Gemini modelini belirtir.
 # Hızlı ve verimli analizler için: 'gemini-1.5-flash-latest' (varsayılan)
@@ -14,7 +17,7 @@ GEMINI_MODEL = 'gemini-1.5-flash-latest'
 # 'False' olarak ayarlandığında, tüm işlemler simülasyon olarak kalır.
 # 'True' olarak ayarlandığında, bot Binance hesabınızda GERÇEK alım-satım emirleri gönderir.
 # Bu ayarı değiştirmeden önce risklerin farkında olduğunuzdan emin olun.
-LIVE_TRADING = True
+LIVE_TRADING = False
 
 # === EMİR TÜRÜ VE STRATEJİSİ AYARLARI ===
 # Botun kullanacağı varsayılan emir türünü belirler.

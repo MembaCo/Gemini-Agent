@@ -19,6 +19,7 @@ from tools import (
     _get_unified_symbol, get_top_gainers_losers
 )
 import config
+from config import APP_VERSION
 
 # ... (Dosyanın üst kısmı aynı, değişiklik yok) ...
 load_dotenv()
@@ -581,6 +582,11 @@ def main():
     initialize_exchange(config.DEFAULT_MARKET_TYPE)
     
     print("\n" + "="*50)
+    print(f"Bot başlatılıyor... Versiyon: {APP_VERSION}")
+    print(f"UYARI: CANLI İŞLEM MODU {'AKTİF' if config.LIVE_TRADING else 'KAPALI'}.")
+    if config.LIVE_TRADING:
+        print("Lütfen tüm ayarlarınızın doğruluğundan emin olun!")
+    print("="*50 + "\n")
     print("Bot başlatılıyor...")
     print(f"UYARI: CANLI İŞLEM MODU {'AKTİF' if config.LIVE_TRADING else 'KAPALI'}.")
     if config.LIVE_TRADING:
