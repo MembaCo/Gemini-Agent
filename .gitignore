@@ -4,3 +4,5 @@
 /Sinyal
 /str
 /__pycache__
+*.db
+*.db-journal

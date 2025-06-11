@@ -2,14 +2,14 @@
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.1"
 
 # === YAPAY ZEKA MODEL AYARI ===
 # Botun analiz ve karar verme için kullanacağı Gemini modelini belirtir.
-# Hızlı ve verimli analizler için: 'gemini-1.5-flash-latest' (varsayılan)
+# Hızlı ve verimli analizler için: 'gemini-1.5-flash-latest' (varsayılan) gemini-2.5-flash-preview-05-20  # Hızlı analizler için
 # Daha derin ve kapsamlı analizler için: 'gemini-1.5-pro-latest'
 # Not: Farklı modellerin maliyetleri ve API hız limitleri değişiklik gösterebilir.
-GEMINI_MODEL = 'gemini-1.5-flash-latest'
+GEMINI_MODEL = 'gemini-2.0-flash'
 
 # === ÇOKLU ZAMAN ARALIĞI (MTA) ANALİZİ AYARLARI ===
 # True olarak ayarlanırsa, bot analiz yaparken hem kullanıcının girdiği zaman aralığını (giriş için)
@@ -77,6 +77,7 @@ TRAILING_STOP_ACTIVATION_PERCENT = 1.5
 # === POZİSYON YÖNETİMİ AYARLARI ===
 # Aynı anda açık olabilecek maksimum işlem sayısını limitler.
 MAX_CONCURRENT_TRADES = 3
+DATABASE_FILE = "trades.db" # Veritabanı dosyasının adı
 POSITION_CHECK_INTERVAL_SECONDS = 120
 
 # === PROAKTİF TARAMA AYARLARI ===
