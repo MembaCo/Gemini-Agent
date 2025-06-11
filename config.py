@@ -2,7 +2,7 @@
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"
 
 # === YAPAY ZEKA MODEL AYARI ===
 # Botun analiz ve karar verme için kullanacağı Gemini modelini belirtir.
@@ -11,6 +11,16 @@ APP_VERSION = "1.0.2"
 # Not: Farklı modellerin maliyetleri ve API hız limitleri değişiklik gösterebilir.
 GEMINI_MODEL = 'gemini-1.5-flash-latest'
 
+# === ÇOKLU ZAMAN ARALIĞI (MTA) ANALİZİ AYARLARI ===
+# True olarak ayarlanırsa, bot analiz yaparken hem kullanıcının girdiği zaman aralığını (giriş için)
+# hem de aşağıdaki 'MTA_TREND_TIMEFRAME' aralığını (ana trendi belirlemek için) kullanır.
+# Bu, sinyal gücünü ve isabet oranını artırmayı hedefler.
+# False ise, sadece kullanıcının girdiği tek zaman aralığı ile standart analiz yapar.
+USE_MTA_ANALYSIS = True
+
+# USE_MTA_ANALYSIS = True ise, ana trendin yönünü belirlemek için kullanılacak
+# üst zaman aralığını belirtir. Yaygın kullanılan değerler: "1h", "4h", "1d".
+MTA_TREND_TIMEFRAME = "4h"
 
 # === CANLI İŞLEM AYARI (DİKKAT!) ===
 # Bu ayar, botun GERÇEK para ile işlem yapıp yapmayacağını kontrol eder.

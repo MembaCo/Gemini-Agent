@@ -1,12 +1,13 @@
-# Gemini Trading Agent v1.0.0
+# Gemini Trading Agent v1.1.0
 
-![Versiyon](https://img.shields.io/badge/versiyon-1.0.0-blue) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet)
+![Versiyon](https://img.shields.io/badge/versiyon-1.1.0-blue) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet)
 
 Google'ın güçlü Gemini (1.5 Flash & Pro) yapay zeka modellerini ve LangChain framework'ünü kullanarak kripto para piyasalarında (Spot ve Futures) otomatik alım-satım işlemleri yapan gelişmiş bir trading botu.
 
 ## Temel Özellikler
 
 - **Yapay Zeka Destekli Analiz:** Google Gemini modellerini kullanarak tekli veya toplu coin analizleri yapabilme.
+- **Çoklu Zaman Aralığı Analizi (MTA):** Kısa vadeli giriş sinyallerini, daha yüksek bir zaman dilimindeki ana trend ile teyit ederek alım-satım kararlarının isabetliliğini artırma.
 - **Gelişmiş Strateji Motoru:** ADX, RSI, Bollinger Bantları, MACD ve Stokastik gibi birden çok teknik göstergeye dayalı yapılandırılmış alım-satım kuralları.
 - **İki Farklı Tarama Modu:**
     - **Manuel Analiz:** İstediğiniz bir kripto parayı anlık olarak analiz edip işlem açma.
@@ -50,7 +51,7 @@ Google'ın güçlü Gemini (1.5 Flash & Pro) yapay zeka modellerini ve LangChain
     ```
 
 4.  **Botu Yapılandırın:**
-    `config.py` dosyasını açarak strateji ve risk yönetimi ayarlarınızı (kaldıraç, marjin, işlem modu vb.) kendinize göre düzenleyin.
+    `config.py` dosyasını açarak strateji ve risk yönetimi ayarlarınızı (kaldıraç, marjin, işlem modu, MTA ayarları vb.) kendinize göre düzenleyin.
     **ÖNEMLİ:** Bota alışana kadar `LIVE_TRADING` ayarını mutlaka `False` olarak bırakın!
 
 ## Kullanım
@@ -59,20 +60,3 @@ Tüm ayarları tamamladıktan sonra botu aşağıdaki komutla başlatabilirsiniz
 
 ```bash
 python main.py
-```
-
-Program başladığında sizi bir menü karşılayacaktır:
-- `1. Pozisyonları Göster ve Senkronize Et`: Borsadaki mevcut açık pozisyonlarınızı listeler ve botun hafızasıyla eşleştirir.
-- `2. Yeni Analiz Yap ve Pozisyon Aç`: Belirttiğiniz bir coin için anlık analiz yapar ve onayınızla işlem açar.
-- `3. Açık Pozisyonu Yönet`: Botun hafızasındaki bir pozisyonu manuel olarak kapatmanızı veya yeniden analiz etmenizi sağlar.
-- `P. PROAKTİF TARAMAYI BAŞLAT`: Arka planda otomatik olarak fırsat taramasını başlatır.
-- `4. Çıkış`: Botu güvenli bir şekilde kapatır.
-
-
-## Yasal Uyarı ve Risk Bildirimi
-
-Bu yazılım, yalnızca eğitim ve araştırma amaçlı geliştirilmiştir. Finansal bir yatırım tavsiyesi değildir.
-
-Kripto para piyasaları oldukça volatildir ve yüksek risk içerir. Bu botu kullanarak yapacağınız işlemler sonucunda oluşabilecek finansal kayıplardan tamamen siz sorumlusunuz. Yazılımın geliştiricisi, herhangi bir kar garantisi vermez ve olası zararlardan sorumlu tutulamaz.
-
-**Lütfen bu yazılımı gerçek para ile kullanmadan önce tüm riskleri anladığınızdan ve kodun nasıl çalıştığını tam olarak bildiğinizden emin olun.**

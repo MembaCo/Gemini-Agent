@@ -3,6 +3,26 @@
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
 Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına dayanmaktadır.
 
+## [1.1.0] - 2025-06-11
+
+Bu sürüm, botun analiz yeteneklerini önemli ölçüde artıran Çoklu Zaman Aralığı (MTA) özelliğini ve kritik bir performans iyileştirmesini içermektedir.
+
+### Eklendi (Added)
+- **Çoklu Zaman Aralığı Analizi (MTA):** Botun analiz yeteneği, kısa vadeli giriş sinyallerini daha yüksek bir zaman dilimindeki ana trend ile teyit ederek daha isabetli kararlar almasını sağlayan MTA özelliği ile geliştirildi.
+- **MTA Konfigürasyonu:** `config.py` dosyasına `USE_MTA_ANALYSIS` ve `MTA_TREND_TIMEFRAME` seçenekleri eklenerek yeni MTA özelliğinin kontrolü sağlandı.
+
+### Değiştirildi (Changed)
+- **Kritik Performans İyileştirmesi:** Proaktif tarama modunda kullanılan `get_top_gainers_losers` fonksiyonu, tüm piyasayı taramak yerine tek bir verimli API çağrısı kullanacak şekilde tamamen yeniden yazıldı. Bu değişiklik, API limit kullanımını büyük ölçüde azaltmış ve tarama hızını onlarca kat artırmıştır.
+- **Prompt Mühendisliği:** Manuel analiz (`handle_new_analysis`) fonksiyonundaki prompt'lar, MTA verilerini (trend ve giriş sinyali) işleyebilecek ve buna göre karar verebilecek şekilde daha gelişmiş hale getirildi.
+- **Simülasyon Modu:** Pozisyonları gösterirken yaklaşık PNL (Kâr/Zarar) hesaplaması, daha sağlam ve hatasız çalışması için metin ayrıştırmak yerine doğrudan dahili bir fonksiyonla fiyatı alacak şekilde iyileştirildi.
+
+### Düzeltildi (Fixed)
+- **Kritik Hata:** `main.py` dosyasında eksik olan `load_positions_from_file` ve `save_positions_to_file` fonksiyon tanımları nedeniyle programın başlangıçta çökmesine neden olan `NameError` hatası giderildi.
+- **Arayüz:** Program başlangıcında tekrar eden konsol karşılama mesajları kaldırılarak daha temiz bir başlangıç sağlandı.
+
+## [1.0.2] - 2025-06-11:
+**Mimari İyileştirme:** Simülasyon modu ve pozisyon listeleme mantığı düzeltildi.
+
 ## [1.0.0] - 2025-06-11
 
 Bu, projenin ilk kararlı sürümüdür. Çekirdek özellikler tamamlanmış ve bilinen kritik hatalar giderilmiştir.
@@ -24,9 +44,6 @@ Bu, projenin ilk kararlı sürümüdür. Çekirdek özellikler tamamlanmış ve 
 
 ### Düzeltildi (Fixed)
 - **Kritik Hata:** Agent'in `Action: None` üreterek veya aynı aracı tekrar tekrar çağırarak sonsuz döngüye girmesi ve API kotasını tüketmesi sorunu çözüldü.
-- **Mantık Hatası:** Başarılı bir işlem sonrası dönen `"başarıyla"` mesajının `"başarılı"` olarak kontrol edilmesi nedeniyle işlemin başarısız sanılması hatası düzeltildi. Artık başarılı işlemler doğru bir şekilde `managed_positions.json` dosyasına kaydediliyor.
+- **Mantık Hatası:** Başarılı bir işlem sonrası dönen `"başarıyla"` mesajının `"başarılı"` olarak kontrol edilmesi nedeniyle işlemin başarısız sanılması hatası düzeltildi.
 - **Veri Tipi Hatası:** Borsa senkronizasyonu sırasında `leverage` değerinin `None` gelmesi durumunda programın çökmesine neden olan `TypeError` hatası giderildi.
 - **Kurulum Hatası:** `@tool` ile işaretlenen fonksiyonlarda `docstring` eksikliği nedeniyle programın başlamamasına neden olan `ValueError` hatası düzeltildi.
-
-## [1.0.2] - 2025-06-11: 
-**Mimari İyileştirme:** Simülasyon modu ve pozisyon listeleme mantığı düzeltildi.

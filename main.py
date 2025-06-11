@@ -16,12 +16,11 @@ from distutils.util import strtobool
 from tools import (
     get_market_price, get_technical_indicators, execute_trade_order,
     initialize_exchange, get_open_positions_from_exchange, get_atr_value,
-    _get_unified_symbol, get_top_gainers_losers
+    _get_unified_symbol, get_top_gainers_losers, _fetch_price_natively
 )
 import config
 from config import APP_VERSION
 
-# ... (Dosyanın üst kısmı aynı, değişiklik yok) ...
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
@@ -48,7 +47,7 @@ except Exception as e:
     logging.critical(f"LLM veya Agent başlatılırken hata oluştu: {e}")
     exit()
 
-
+# <<< HATA DÜZELTME: Eksik fonksiyonlar buraya eklendi >>>
 def save_positions_to_file():
     with positions_lock:
         try:
@@ -73,7 +72,54 @@ def load_positions_from_file():
                 logging.error(f"HATA: Pozisyon dosyası ({POSITIONS_FILE}) okunamadı: {e}")
                 open_positions_managed_by_bot = []
 
+def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, entry_indicators: dict, trend_timeframe: str, trend_indicators: dict) -> str:
+    """
+    Çoklu Zaman Aralığı (MTA) analizi için Gemini'ye özel bir prompt oluşturur.
+    """
+    entry_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in entry_indicators.items()])
+    trend_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in trend_indicators.items()])
+
+    return f"""
+    Sen, Çoklu Zaman Aralığı (MTA) konusunda uzmanlaşmış profesyonel bir trading analistisin.
+    Görevin, sana sunulan iki farklı zaman aralığına ait veriyi birleştirerek kapsamlı bir analiz yapmak ve net bir ticaret kararı ('AL', 'SAT' veya 'BEKLE') vermektir.
+
+    ## ANALİZ KURALLARI:
+    1.  **Önce Trendi Belirle:** İlk olarak '{trend_timeframe}' zaman aralığındaki verilere bakarak ana trendin yönünü (Yükseliş, Düşüş, Yönsüz) belirle. ADX > 25 ise trendin güçlü olduğunu unutma.
+    2.  **Sinyali Trend ile Teyit Et:** Ardından '{entry_timeframe}' zaman aralığındaki giriş sinyalini analiz et.
+        - Eğer ana trend Yükseliş ise ve giriş sinyali 'AL' ise, bu güçlü bir teyittir. Kararın 'AL' olabilir.
+        - Eğer ana trend Düşüş ise ve giriş sinyali 'SAT' ise, bu güçlü bir teyittir. Kararın 'SAT' olabilir.
+        - **Eğer trend ile sinyal arasında bir uyumsuzluk varsa (örn: Trend yükselirken giriş sinyali 'SAT' ise) VEYA ana trend 'Yönsüz' ise, kararını 'BEKLE' olarak ver.**
+    3.  **Gerekçeni Açıkla:** Kararının arkasındaki mantığı, her iki zaman aralığından da bahsederek kısaca açıkla.
+
+    ## SAĞLANAN VERİLER:
+    - Sembol: {symbol}
+    - Anlık Fiyat: {price}
+
+    ### Ana Trend Verileri ({trend_timeframe})
+    {trend_indicator_text}
+
+    ### Giriş Sinyali Verileri ({entry_timeframe})
+    {entry_indicator_text}
+
+    ## İSTENEN JSON ÇIKTI FORMATI:
+    Kararını ve gerekçeni, aşağıda formatı verilen JSON çıktısı olarak sun. Başka hiçbir açıklama yapma.
+    ```json
+    {{
+      "symbol": "{symbol}",
+      "timeframe": "{entry_timeframe}",
+      "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
+      "reason": "MTA analizine dayalı kısa ve net gerekçen. (Örn: '4h trendi yükselişteyken, 15m'de RSI ve MACD AL sinyali üretti.')",
+      "analysis_type": "MTA",
+      "trend_timeframe": "{trend_timeframe}",
+      "data": {{
+        "price": {price}
+      }}
+    }}
+    ```
+    """
+
 def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indicators: dict) -> str:
+    """Tekli zaman aralığı analizi için standart prompt'u oluşturur."""
     indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in indicators.items()])
     return f"""
     Sen, uzman bir trading analistisin.
@@ -94,6 +140,7 @@ def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indi
       "timeframe": "{timeframe}",
       "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
       "reason": "Kararının kısa ve net gerekçesi.",
+      "analysis_type": "Single",
       "data": {{
         "price": {price}
       }}
@@ -107,28 +154,55 @@ def handle_new_analysis():
             print("\n### UYARI: Maksimum pozisyon limitine ulaşıldı. ###")
             return
 
-    timeframe = input(f"Zaman aralığı seçin (örn: 15m, 1h) [varsayılan: 1h]: ").lower().strip() or "1h"
+    entry_timeframe = input(f"Giriş için zaman aralığı seçin (örn: 15m, 1h) [varsayılan: 15m]: ").lower().strip() or "15m"
     user_input = input(f"Analiz edilecek kripto parayı girin (örn: BTC): ")
     if not user_input: return
     
     unified_symbol = _get_unified_symbol(user_input)
-    print(f"\nVeriler toplanıyor ve yapay zeka analiz yapıyor ({unified_symbol})...")
-
+    
+    use_mta = config.USE_MTA_ANALYSIS
+    trend_timeframe = config.MTA_TREND_TIMEFRAME if use_mta else None
+    
+    if use_mta:
+        print(f"\nÇoklu Zaman Aralığı (MTA) Analizi başlatılıyor ({unified_symbol})...")
+        print(f"Trend Zaman Aralığı: {trend_timeframe}, Giriş Zaman Aralığı: {entry_timeframe}")
+    else:
+        print(f"\nStandart analiz başlatılıyor ({unified_symbol}, {entry_timeframe})...")
+    
+    print("Veriler toplanıyor...")
+    
     try:
-        price_str = get_market_price.invoke({"symbol": unified_symbol})
-        if "HATA" in price_str:
-            print(f"HATA: Fiyat bilgisi alınamadı. {price_str}")
+        current_price = _fetch_price_natively(unified_symbol)
+        if current_price is None:
+            print(f"HATA: Fiyat bilgisi alınamadı: {unified_symbol}")
             return
-        current_price = float(re.search(r'[\d\.]+$', price_str).group())
+        
+        entry_indicators_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{unified_symbol},{entry_timeframe}"})
+        if entry_indicators_result.get("status") != "success":
+            print(f"HATA: Giriş ({entry_timeframe}) için teknik göstergeler alınamadı: {entry_indicators_result.get('message')}")
+            return
+        entry_indicators_data = entry_indicators_result["data"]
+        
+        final_prompt = ""
+        if use_mta:
+            trend_indicators_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{unified_symbol},{trend_timeframe}"})
+            if trend_indicators_result.get("status") != "success":
+                print(f"HATA: Trend ({trend_timeframe}) için teknik göstergeler alınamadı: {trend_indicators_result.get('message')}")
+                return
+            trend_indicators_data = trend_indicators_result["data"]
+            
+            final_prompt = create_mta_analysis_prompt(
+                symbol=unified_symbol,
+                price=current_price,
+                entry_timeframe=entry_timeframe,
+                entry_indicators=entry_indicators_data,
+                trend_timeframe=trend_timeframe,
+                trend_indicators=trend_indicators_data
+            )
+        else:
+            final_prompt = create_final_analysis_prompt(unified_symbol, entry_timeframe, current_price, entry_indicators_data)
 
-        indicators_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{unified_symbol},{timeframe}"})
-        if indicators_result.get("status") != "success":
-            print(f"HATA: Teknik göstergeler alınamadı. {indicators_result.get('message')}")
-            return
-        
-        indicators_data = indicators_result["data"]
-        final_prompt = create_final_analysis_prompt(unified_symbol, timeframe, current_price, indicators_data)
-        
+        print("Yapay zeka analizi yapılıyor...")
         result = llm.invoke(final_prompt)
         parsed_data = parse_agent_response(result.content)
 
@@ -147,7 +221,7 @@ def handle_new_analysis():
                 recommendation=recommendation,
                 trade_symbol=parsed_data.get('symbol'),
                 current_price=price_from_report,
-                timeframe=timeframe,
+                timeframe=entry_timeframe, 
                 parsed_data=parsed_data
             )
         else:
@@ -212,13 +286,16 @@ def check_and_manage_positions_thread_safe():
     positions_to_close = []
     with positions_lock:
         positions_to_iterate = open_positions_managed_by_bot[:]
+    
     for i, position in enumerate(positions_to_iterate):
         try:
-            price_str_result = get_market_price.invoke({"symbol": position["symbol"]})
-            if "HATA" in price_str_result: continue
-            current_price = float(re.search(r'[\d\.]+$', price_str_result).group())
+            current_price = _fetch_price_natively(position["symbol"])
+            if current_price is None:
+                continue
+
             side, sl_price, tp_price = position.get("side"), position.get("stop_loss"), position.get("take_profit")
             if not all([side, sl_price, tp_price]) or sl_price == 0 or tp_price == 0: continue
+
             if (side == "buy" and (current_price <= sl_price or current_price >= tp_price)) or \
                (side == "sell" and (current_price >= sl_price or current_price <= tp_price)):
                 reason = "Zarar Durdur (SL)" if (current_price <= sl_price if side == 'buy' else current_price >= sl_price) else "Kar Al (TP)"
@@ -249,42 +326,39 @@ def sync_and_display_positions():
     global open_positions_managed_by_bot
     print("\n--- Pozisyonlar Görüntüleniyor... ---")
 
-    # === YENİ MANTIK: SİMÜLASYON MODU KONTROLÜ ===
     if not config.LIVE_TRADING:
         print("--- SİMÜLASYON MODU AKTİF ---")
         with positions_lock:
-            # Dosyadan en güncel hali tekrar oku, emin olmak için.
             load_positions_from_file()
             if not open_positions_managed_by_bot:
                 print("Bot tarafından yönetilen simüle edilmiş pozisyon bulunmuyor.")
             else:
                 print(f"--- Bot Hafızasındaki Simüle Pozisyonlar: {len(open_positions_managed_by_bot)} ---")
                 for pos in open_positions_managed_by_bot:
-                    # Simüle PNL için anlık fiyatı çekip yaklaşık bir hesaplama yapalım
-                    pnl_info = ""
-                    try:
-                        price_str = get_market_price.invoke({"symbol": pos['symbol']})
-                        if "HATA" not in price_str:
-                            current_price = float(re.search(r'[\d\.]+$', price_str).group())
-                            pnl = (current_price - pos['entry_price']) * pos['amount']
-                            if pos['side'] == 'sell':
-                                pnl = -pnl
-                            
-                            # Marjin ve PNL yüzdesi hesaplaması (yaklaşık)
-                            margin = (pos['entry_price'] * pos['amount']) / pos['leverage'] if pos.get('leverage', 0) > 0 else (pos['entry_price'] * pos['amount'])
-                            pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
-                            pnl_status = "⬆️ KAR" if pnl >= 0 else "⬇️ ZARAR"
-                            pnl_info = f"| PNL (Yaklaşık): {pnl:.2f} USDT ({pnl_percentage:.2f}%) [{pnl_status}]"
-
-                    except Exception:
-                        pnl_info = "| PNL Hesaplanamadı"
-
-                    print(f"  - {pos['symbol']} ({pos['side'].upper()}) | Giriş: {pos['entry_price']:.4f} | Miktar: {pos['amount']:.4f} {pnl_info}")
-
+                    pnl_info = "| PNL Hesaplanamadı"
+                    current_price = _fetch_price_natively(pos['symbol'])
+                    
+                    if current_price is not None:
+                        entry_price = pos.get('entry_price', 0)
+                        amount = pos.get('amount', 0)
+                        leverage = pos.get('leverage', 1)
+                        side = pos.get('side', 'buy')
+                        
+                        pnl = (current_price - entry_price) * amount
+                        if side == 'sell':
+                            pnl = -pnl
+                        
+                        margin = (entry_price * amount) / leverage if leverage > 0 else (entry_price * amount)
+                        pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
+                        pnl_status = "⬆️ KAR" if pnl >= 0 else "⬇️ ZARAR"
+                        
+                        pnl_info = f"| PNL (Tahmini): {pnl:+.2f} USDT ({pnl_percentage:+.2f}%) {pnl_status}"
+                    
+                    print(f"  - {pos['symbol']} ({pos['side'].upper()}) | Giriş: {pos.get('entry_price', 0):.4f} | Miktar: {pos.get('amount', 0):.4f} {pnl_info}")
+        
         print("--- Simülasyon gösterimi tamamlandı. ---")
-        return # Fonksiyondan çık, CANLI mod senkronizasyonunu yapma
+        return
 
-    # === ESKİ MANTIK: Sadece CANLI MODDA çalışacak kısım ===
     print("--- CANLI MOD: Borsa ile Senkronize Ediliyor... ---")
     try:
         exchange_positions = get_open_positions_from_exchange.invoke({})
@@ -332,43 +406,20 @@ def sync_and_display_positions():
                         print(f"      +++ {unified_symbol} pozisyonu bot yönetimine eklendi.")
         
         with positions_lock:
-            # Canlı modda botun hafızası borsaya eşitlenir.
             open_positions_managed_by_bot = updated_managed_list
             save_positions_to_file()
         print("--- Senkronizasyon tamamlandı. ---")
     except Exception as e:
-        logging.error(f"Senkronizasyon sırasında hata oluştu: {e}")
-        import traceback
-        traceback.print_exc()
+        logging.error(f"Senkronizasyon sırasında hata oluştu: {e}", exc_info=True)
 
-def handle_manual_close(position, index):
-    print(f"UYARI: {position['symbol']} pozisyonunu manuel olarak kapatacaksınız.")
-    onay = input("Emin misiniz? (evet/hayır): ").lower()
-    if onay == 'evet':
-        close_side = 'sell' if position['side'] == 'buy' else 'buy'
-        # execute_trade_order simülasyon modunu kendi içinde yönetir.
-        result = execute_trade_order.invoke({
-            "symbol": position['symbol'], 
-            "side": close_side, 
-            "amount": position['amount']
-        })
-        print(f"Kapatma Sonucu: {result}")
-        
-        # Hem canlı hem de simülasyon modunda başarılıysa pozisyonu kaldır
-        if "başarı" in result.lower() or "simülasyon" in result.lower():
-            with positions_lock:
-                if index < len(open_positions_managed_by_bot) and open_positions_managed_by_bot[index] == position:
-                    open_positions_managed_by_bot.pop(index)
-                    save_positions_to_file()
-                print(f"+++ POZİSYON MANUEL OLARAK KAPATILDI: {position['symbol']} +++")
 
 def _execute_single_scan_cycle():
-    """Proaktif tarama döngüsünün tek bir adımını çalıştırır. Dinamik zaman aralığı düşüş (fallback) mantığı içerir."""
+    """Proaktif tarama döngüsünün tek bir adımını çalıştırır."""
     logging.info("--- Yeni Tarama Döngüsü Başlatılıyor ---")
     try:
         with positions_lock:
             if len(open_positions_managed_by_bot) >= config.MAX_CONCURRENT_TRADES:
-                logging.warning(f"Maksimum pozisyon limitine ({config.MAX_CONCURRENT_TRADES}) ulaşıldı.")
+                logging.warning(f"Maksimum pozisyon limitine ({config.MAX_CONCURRENT_TRADES}) ulaşıldı. Tarama atlanıyor.")
                 return
 
         symbols_to_process = get_top_gainers_losers(config.PROACTIVE_SCAN_TOP_N) if config.PROACTIVE_SCAN_USE_GAINERS_LOSERS else [{'symbol': s} for s in config.PROACTIVE_SCAN_COIN_LIST]
@@ -390,7 +441,6 @@ def _execute_single_scan_cycle():
 
         market_data_batch = []
         
-        # === DEĞİŞİKLİK BURADA: FALLBACK DÖNGÜSÜ ===
         for item in symbols_to_process:
             symbol = item['symbol']
             price = item.get('price')
@@ -410,21 +460,20 @@ def _execute_single_scan_cycle():
                     successful_result = tech_data_result
                     successful_timeframe = timeframe
                     logging.info(f"+++ Veri başarıyla toplandı: {symbol} @ {timeframe}")
-                    break  # Başarılı olunca iç döngüden çık
+                    break
                 else:
                     logging.warning(f"--- Veri alınamadı ({timeframe}): {tech_data_result.get('message')}. Sonraki zaman aralığı denenecek...")
-                    time.sleep(1) # API'yi yormamak için kısa bir bekleme
+                    time.sleep(1)
 
             if successful_result:
                 market_data_batch.append({
                     "symbol": symbol,
                     "price": price,
                     "indicators": successful_result["data"],
-                    "timeframe": successful_timeframe # Başarılı olan zaman aralığını da ekliyoruz
+                    "timeframe": successful_timeframe
                 })
             else:
                 logging.error(f"Tüm zaman aralıkları denendi, {symbol} için veri alınamadı, bu sembol atlanıyor.")
-        # === DEĞİŞİKLİK SONU ===
 
         if not market_data_batch:
             logging.info("Analiz edilecek geçerli veri bulunamadı.")
@@ -444,26 +493,25 @@ def _execute_single_scan_cycle():
         for rec in recommendations:
             print(f"  - {rec.get('symbol')}: {rec.get('recommendation')} ({rec.get('reason')})")
             if rec.get("recommendation") in ["AL", "SAT"]:
-                # Eşleşen veriyi market_data_batch'ten bul
                 source_data = next((d for d in market_data_batch if d['symbol'] == rec.get('symbol')), None)
                 if source_data:
                     rec['price'] = source_data['price']
-                    rec['timeframe'] = source_data['timeframe'] # Analizin yapıldığı gerçek zaman aralığını ata
+                    rec['timeframe'] = source_data['timeframe']
                     actionable_opportunities.append(rec)
         
         if actionable_opportunities:
             print("\n--- İŞLEM ONAYI GEREKEN FIRSATLAR ---")
             for opportunity in actionable_opportunities:
-                 with positions_lock:
+                with positions_lock:
                     if len(open_positions_managed_by_bot) >= config.MAX_CONCURRENT_TRADES:
-                        logging.warning("Fırsat bulundu ancak maksimum pozisyon limitine ulaşıldı.")
+                        logging.warning("Fırsat bulundu ancak maksimum pozisyon limitine ulaşıldı. Diğer fırsatlar atlanıyor.")
                         break
                 
-                 handle_trade_confirmation(
+                handle_trade_confirmation(
                     recommendation=opportunity.get('recommendation'),
                     trade_symbol=opportunity.get('symbol'),
                     current_price=opportunity.get('price'),
-                    timeframe=opportunity.get('timeframe'), # Doğru zaman aralığını aktar
+                    timeframe=opportunity.get('timeframe'),
                     auto_confirm=config.PROACTIVE_SCAN_AUTO_CONFIRM
                 )
         else:
@@ -557,8 +605,6 @@ def handle_trade_confirmation(recommendation, trade_symbol, current_price, timef
             result_str = execute_trade_order.invoke(position_to_open)
             print(f"İşlem Sonucu: {result_str}")
 
-            # === DEĞİŞİKLİK BURADA ===
-            # Kontrolü daha esnek hale getiriyoruz.
             if "başarı" in result_str.lower() or "simülasyon" in result_str.lower():
                 final_entry_price = limit_price if limit_price else current_price
                 managed_position_details = {
@@ -660,15 +706,12 @@ def main():
     initialize_exchange(config.DEFAULT_MARKET_TYPE)
     
     print("\n" + "="*50)
-    print(f"Bot başlatılıyor... Versiyon: {APP_VERSION}")
-    print(f"UYARI: CANLI İŞLEM MODU {'AKTİF' if config.LIVE_TRADING else 'KAPALI'}.")
+    print(f"           GEMINI TRADING AGENT BAŞLATILDI")
+    print(f"                 Versiyon: {APP_VERSION}")
+    print("="*50)
+    print(f"UYARI: CANLI İŞLEM MODU {'✅ AKTİF ✅' if config.LIVE_TRADING else '❌ KAPALI (Simülasyon Modu) ❌'}.")
     if config.LIVE_TRADING:
-        print("Lütfen tüm ayarlarınızın doğruluğundan emin olun!")
-    print("="*50 + "\n")
-    print("Bot başlatılıyor...")
-    print(f"UYARI: CANLI İŞLEM MODU {'AKTİF' if config.LIVE_TRADING else 'KAPALI'}.")
-    if config.LIVE_TRADING:
-        print("Lütfen tüm ayarlarınızın doğruluğundan emin olun!")
+        print("DİKKAT: Bot, Binance hesabınızda gerçek para ile işlem yapacaktır!")
     print("="*50 + "\n")
     
     checker_thread = threading.Thread(target=background_position_checker, daemon=True)
@@ -682,7 +725,7 @@ def main():
         if config.PROACTIVE_SCAN_ENABLED:
             print("P. PROAKTİF TARAMAYI BAŞLAT (Fırsat Avcısı)")
         print("4. Çıkış")
-        choice = input("Seçiminiz: ").lower()
+        choice = input("Seçiminiz: ").lower().strip()
         
         if choice == "1":
             sync_and_display_positions()
@@ -692,13 +735,6 @@ def main():
             handle_manage_position()
         elif choice == "p" and config.PROACTIVE_SCAN_ENABLED:
             run_proactive_scanner()
-            if config.PROACTIVE_SCAN_IN_LOOP:
-                print("Sürekli tarama modu aktif. Durdurmak için Ctrl+C kullanın.")
-                try:
-                    while checker_thread.is_alive():
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    print("\nSürekli tarama durduruldu. Ana menüye dönülüyor.")
         elif choice == "4":
             print("Bot kapatılıyor...")
             break

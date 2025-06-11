@@ -13,7 +13,6 @@ from distutils.util import strtobool
 
 import config
 
-# ... (Dosyanın üst kısmı aynı, değişiklik yok) ...
 load_dotenv()
 exchange = None
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,10 +30,15 @@ def initialize_exchange(market_type: str = "spot"):
         "apiKey": api_key, "secret": secret_key,
         "options": {"defaultType": market_type.lower()},
     }
-    if use_testnet:
-        logging.warning("--- BINANCE TESTNET KULLANILIYOR ---")
-        config_data["options"]["test"] = True
-    exchange = ccxt.binance(config_data)
+    
+    # Testnet URL'sini manuel ayarlayarak daha sağlam hale getiriyoruz.
+    if use_testnet and market_type.lower() == 'future':
+        logging.warning("--- BINANCE FUTURES TESTNET KULLANILIYOR ---")
+        exchange = ccxt.binance(config_data)
+        exchange.set_sandbox_mode(True)
+    else:
+        exchange = ccxt.binance(config_data)
+
     try:
         exchange.load_markets()
         logging.info(f"--- Piyasalar, '{market_type.upper()}' pazarı için başarıyla yüklendi. ---")
@@ -45,7 +49,6 @@ def initialize_exchange(market_type: str = "spot"):
 
 def _get_unified_symbol(symbol_input: str) -> str:
     """Her türlü kullanıcı girdisini ('BTC', 'BTC/USDT') standart formata dönüştürür."""
-    # ... (Değişiklik yok) ...
     if not isinstance(symbol_input, str):
         raise TypeError("Sembol girdisi bir metin (string) olmalıdır.")
     cleaned_input = symbol_input.strip().strip("'\"")
@@ -59,7 +62,6 @@ def _get_unified_symbol(symbol_input: str) -> str:
 
 def _parse_symbol_timeframe_input(input_str: str) -> (str, str):
     """Girdiden sembol ve zaman aralığını ayrıştırır."""
-    # ... (Değişiklik yok) ...
     timeframe = "1h"
     symbol = input_str
     valid_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
@@ -75,20 +77,27 @@ def _parse_symbol_timeframe_input(input_str: str) -> (str, str):
                 timeframe = potential_tf.lower()
     return symbol, timeframe
 
-@tool
-def get_market_price(symbol: str) -> str:
-    """Belirtilen kripto para biriminin anlık piyasa fiyatını alır."""
-    # ... (Değişiklik yok) ...
-    if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
+def _fetch_price_natively(symbol: str) -> float | None:
+    """Dahili kullanım için bir sembolün fiyatını doğrudan sayısal olarak çeker."""
+    if not exchange: return None
     try:
         unified_symbol = _get_unified_symbol(symbol)
         ticker = exchange.fetch_ticker(unified_symbol)
-        price = ticker.get("last")
+        return float(ticker.get("last")) if ticker.get("last") is not None else None
+    except Exception:
+        return None
+
+@tool
+def get_market_price(symbol: str) -> str:
+    """Belirtilen kripto para biriminin anlık piyasa fiyatını alır."""
+    if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
+    try:
+        unified_symbol = _get_unified_symbol(symbol)
+        price = _fetch_price_natively(unified_symbol)
         return f"{unified_symbol} için anlık piyasa fiyatı: {price}" if price is not None else f"HATA: {unified_symbol} için fiyat bilgisi alınamadı."
     except Exception as e:
-        logging.error(f"Fiyat alınırken hata oluştu ({symbol} -> {unified_symbol}): {e}")
-        return f"HATA: Fiyat alınamadı. Sembol: '{unified_symbol}'. Hata: {e}"
-
+        logging.error(f"Fiyat alınırken hata oluştu ({symbol}): {e}")
+        return f"HATA: Fiyat alınamadı. Sembol: '{symbol}'. Hata: {e}"
 
 @tool
 def get_technical_indicators(symbol_and_timeframe: str) -> dict:
@@ -101,11 +110,8 @@ def get_technical_indicators(symbol_and_timeframe: str) -> dict:
         symbol, timeframe = _parse_symbol_timeframe_input(symbol_and_timeframe)
         unified_symbol = _get_unified_symbol(symbol)
         
-        # === DEĞİŞİKLİK BURADA ===
-        # Daha fazla geçmiş veri talep ederek NaN hatası alma olasılığını azaltıyoruz.
         bars = exchange.fetch_ohlcv(unified_symbol, timeframe=timeframe, limit=200)
         
-        # İndikatörlerin en uzunu ~26 periyotluk olduğu için en az 50 mum verisi olmasını kontrol edelim.
         if not bars or len(bars) < 50:
             raise ValueError(f"İndikatör hesaplaması için yetersiz veri ({len(bars)} mum).")
         
@@ -134,7 +140,6 @@ def get_technical_indicators(symbol_and_timeframe: str) -> dict:
         }
 
         if any(value is None or pd.isna(value) for value in indicators.values()):
-            # Bu uyarı hala görünebilir, ancak artık daha az sıklıkta olmalı.
             logging.warning(f"{unified_symbol} için indikatör hesaplaması 'NaN' sonucu verdi. Muhtemelen coinin geçmişi yetersiz.")
             return {"status": "error", "message": f"{unified_symbol} için indikatör hesaplanamadı (NaN)."}
 
@@ -150,14 +155,13 @@ def get_atr_value(symbol_and_timeframe: str) -> dict:
     Belirtilen sembol ve zaman aralığı için ATR (Average True Range) değerini hesaplar
     ve sonucu bir SÖZLÜK (dictionary) olarak döndürür.
     """
-    # ... (Bu fonksiyonda da limiti artıralım) ...
     if not exchange: return {"status": "error", "message": "Borsa bağlantısı başlatılmamış."}
     try:
         symbol, timeframe = _parse_symbol_timeframe_input(symbol_and_timeframe)
         unified_symbol = _get_unified_symbol(symbol)
         
-        bars = exchange.fetch_ohlcv(unified_symbol, timeframe=timeframe, limit=200) # Limit artırıldı
-        if not bars or len(bars) < 20: # ATR için daha az veri yeterli
+        bars = exchange.fetch_ohlcv(unified_symbol, timeframe=timeframe, limit=200)
+        if not bars or len(bars) < 20:
              raise ValueError(f"ATR için yetersiz veri ({len(bars)} mum).")
 
         df = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
@@ -174,44 +178,67 @@ def get_atr_value(symbol_and_timeframe: str) -> dict:
         logging.error(f"ATR değeri hesaplanırken hata oluştu ({symbol_and_timeframe}): {e}")
         return {"status": "error", "message": f"ATR alınamadı. Detay: {e}"}
 
-# --- Dosyanın geri kalanı aynı kalabilir ---
-
 def get_top_gainers_losers(top_n: int = 5) -> list:
     """
-    Binance Futures piyasasındaki en çok değer kazanan ve kaybeden coinleri alır.
+    Binance Futures piyasasındaki 24 saatlik değişime göre en çok değer kazanan ve kaybeden
+    ilk 'top_n' adet coini TEK BİR API ÇAĞRISI ile verimli bir şekilde alır.
+    Dönen liste, her bir coin için sembol, fiyat ve yüzde değişimini içerir.
     """
-    # ... (Değişiklik yok) ...
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future':
         logging.error("HATA: Gainer/Loser fonksiyonu sadece 'future' piyasası modunda çalışır.")
-        return [] 
+        return []
     
-    logging.info(f"Binance Futures Gainer/Loser listesi ve tüm fiyatlar çekiliyor (Top {top_n})...")
-    logging.warning("Mevcut 'get_top_gainers_losers' metodu tüm ticker'ları çektiği için verimsizdir. API limitlerini etkileyebilir.")
+    logging.info(f"Binance Futures Gainer/Loser listesi tek çağrı ile verimli olarak çekiliyor (Top {top_n})...")
+    
     try:
-        all_tickers = exchange.fetch_tickers()
-        if not all_tickers:
-            logging.warning("API'den hiç ticker verisi alınamadı.")
+        # CCXT'nin alt seviye API çağrı mekanizmasını kullanarak tüm 24 saatlik verileri tek seferde çekiyoruz.
+        all_tickers_data = exchange.fapiPublicGetTicker24hr()
+        
+        if not all_tickers_data:
+            logging.warning("API'den 24 saatlik veri alınamadı.")
             return []
+
         processed_tickers = []
-        for symbol, ticker in all_tickers.items():
-            unified_symbol = symbol.split(':')[0]
-            if not unified_symbol.endswith('/USDT'):
+        for ticker in all_tickers_data:
+            # Sadece USDT paritelerini ve geçerli verileri filtrele
+            symbol = ticker.get('symbol')
+            if not symbol or not symbol.endswith('USDT'):
                 continue
-            raw_percentage = ticker.get('info', {}).get('priceChangePercent')
-            price = ticker.get('last')
-            if raw_percentage is not None and price is not None:
+
+            price_change_percent = ticker.get('priceChangePercent')
+            last_price = ticker.get('lastPrice')
+            
+            if price_change_percent is not None and last_price is not None:
                 try:
-                    percentage = float(raw_percentage)
-                    processed_tickers.append({'symbol': unified_symbol, 'percentage': percentage, 'price': float(price)})
+                    processed_tickers.append({
+                        'symbol': _get_unified_symbol(symbol), # Sembolü standart formata getir
+                        'percentage': float(price_change_percent),
+                        'price': float(last_price)
+                    })
                 except (ValueError, TypeError):
+                    # Veri tipi hatalı olanları atla
                     continue
+        
         if not processed_tickers:
-            logging.error("İşlenebilecek formatta (priceChangePercent) bir veri bulunamadı.")
+            logging.error("İşlenebilecek formatta bir ticker verisi bulunamadı.")
             return []
+
+        # Listeyi değişim yüzdesine göre büyükten küçüğe sırala
         processed_tickers.sort(key=lambda item: item['percentage'], reverse=True)
+        
+        # En çok kazananlar (listenin başı) ve en çok kaybedenleri (listenin sonu) al
         gainers = processed_tickers[:top_n]
         losers = processed_tickers[-top_n:]
+        
+        logging.info(f"En iyi {top_n} Gainer ve Loser başarıyla bulundu.")
         return gainers + losers
+
+    except ccxt.NetworkError as e:
+        logging.error(f"Gainer/Loser listesi alınırken ağ hatası oluştu: {e}")
+        return []
+    except ccxt.ExchangeError as e:
+        logging.error(f"Gainer/Loser listesi alınırken borsa hatası oluştu: {e}")
+        return []
     except Exception as e:
         logging.error(f"Gainer/Loser listesi alınırken kritik hata oluştu: {e}", exc_info=True)
         return []
@@ -219,7 +246,6 @@ def get_top_gainers_losers(top_n: int = 5) -> list:
 @tool
 def execute_trade_order(symbol: str, side: str, amount: float, price: float = None, stop_loss: float = None, take_profit: float = None, leverage: float = None) -> str:
     """Alım/satım emri gönderir. SL/TP emirlerini bekleme yapmadan hemen arkasından gönderir."""
-    # ... (Değişiklik yok) ...
     if not exchange:
         return "HATA: Borsa bağlantısı başlatılmamış."
 
@@ -236,17 +262,21 @@ def execute_trade_order(symbol: str, side: str, amount: float, price: float = No
             logging.info(f"Kaldıraç ayarlanıyor: {int(leverage)}x, Sembol: {unified_symbol}")
             exchange.set_leverage(int(leverage), unified_symbol)
         
-        if price:
+        params = {}
+        order_type = config.DEFAULT_ORDER_TYPE.lower()
+        if order_type == 'limit' and price:
             logging.info(f"Limit Emir Gönderiliyor: Miktar={formatted_amount}, Fiyat={price}")
-            order = exchange.create_limit_order(unified_symbol, side, formatted_amount, price)
+            order = exchange.create_limit_order(unified_symbol, side, formatted_amount, price, params)
         else:
+            order_type = 'market' # Fiyat yoksa piyasa emri olarak gönder
             logging.info(f"Piyasa Emri Gönderiliyor: Miktar={formatted_amount}")
-            order = exchange.create_market_order(unified_symbol, side, formatted_amount)
+            order = exchange.create_market_order(unified_symbol, side, formatted_amount, params)
         
         logging.info(f"+++ CANLI GİRİŞ EMRİ BAŞARILI: {order['id']} +++")
         
-        if stop_loss and take_profit:
+        if stop_loss and take_profit and exchange.options.get('defaultType') == 'future':
             opposite_side = 'sell' if side == 'buy' else 'buy'
+            time.sleep(0.5) # Borsanın pozisyonu görmesi için kısa bir bekleme
             try:
                 sl_params = {'stopPrice': stop_loss, 'reduceOnly': True}
                 exchange.create_order(unified_symbol, 'STOP_MARKET', opposite_side, formatted_amount, None, sl_params)
@@ -269,7 +299,6 @@ def execute_trade_order(symbol: str, side: str, amount: float, price: float = No
 @tool
 def get_open_positions_from_exchange(tool_input: str = "") -> list:
     """Borsadaki mevcut açık vadeli işlem pozisyonlarını çeker."""
-    # ... (Değişiklik yok) ...
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future': return []
     try:
         params = {'type': config.DEFAULT_MARKET_TYPE}
@@ -283,7 +312,6 @@ def get_open_positions_from_exchange(tool_input: str = "") -> list:
 @tool
 def get_open_orders(symbol: str) -> list:
     """Belirtilen bir sembol için borsadaki mevcut açık emirleri (SL/TP dahil) çeker."""
-    # ... (Değişiklik yok) ...
     if not exchange:
         logging.error("get_open_orders: Borsa bağlantısı başlatılmamış.")
         return []
@@ -308,7 +336,6 @@ def get_open_orders(symbol: str) -> list:
 @tool
 def update_sl_tp_orders(symbol: str, side: str, amount: float, new_stop_loss: float = None, new_take_profit: float = None) -> str:
     """Bir pozisyon için mevcut SL/TP emirlerini iptal eder ve yenilerini oluşturur."""
-    # ... (Değişiklik yok) ...
     if not exchange or not config.LIVE_TRADING:
         return "HATA: Bu araç sadece canlı işlem modunda çalışır."
     
