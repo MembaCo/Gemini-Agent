@@ -16,7 +16,7 @@ from tools import (
     get_market_price, get_technical_indicators, execute_trade_order,
     initialize_exchange, get_open_positions_from_exchange, get_atr_value,
     _get_unified_symbol, get_top_gainers_losers, _fetch_price_natively,
-    str_to_bool
+    str_to_bool, get_wallet_balance, update_stop_loss_order
 )
 import config
 from config import APP_VERSION
@@ -35,13 +35,21 @@ positions_lock = threading.RLock()
 try:
     llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0.1)
     
-    agent_tools = [get_market_price, get_technical_indicators, get_open_positions_from_exchange, execute_trade_order, get_atr_value]
+    agent_tools = [
+        get_market_price, 
+        get_technical_indicators, 
+        get_open_positions_from_exchange, 
+        execute_trade_order, 
+        get_atr_value, 
+        get_wallet_balance, 
+        update_stop_loss_order
+    ]
     prompt_template = hub.pull("hwchase17/react")
     agent = create_react_agent(llm=llm, tools=agent_tools, prompt=prompt_template)
     agent_executor = AgentExecutor(
         agent=agent, tools=agent_tools, verbose=str_to_bool(os.getenv("AGENT_VERBOSE", "True")),
         handle_parsing_errors="Lütfen JSON formatında geçerli bir yanıt ver.",
-        max_iterations=5
+        max_iterations=7
     )
 except Exception as e:
     logging.critical(f"LLM veya Agent başlatılırken hata oluştu: {e}")
@@ -77,7 +85,6 @@ def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, 
     return f"""
     Sen, Çoklu Zaman Aralığı (MTA) konusunda uzmanlaşmış profesyonel bir trading analistisin.
     Görevin, sana sunulan iki farklı zaman aralığına ait veriyi birleştirerek kapsamlı bir analiz yapmak ve net bir ticaret kararı ('AL', 'SAT' veya 'BEKLE') vermektir.
-
     ## ANALİZ KURALLARI:
     1.  **Önce Trendi Belirle:** İlk olarak '{trend_timeframe}' zaman aralığındaki verilere bakarak ana trendin yönünü (Yükseliş, Düşüş, Yönsüz) belirle. ADX > 25 ise trendin güçlü olduğunu unutma.
     2.  **Sinyali Trend ile Teyit Et:** Ardından '{entry_timeframe}' zaman aralığındaki giriş sinyalini analiz et.
@@ -85,17 +92,13 @@ def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, 
         - Eğer ana trend Düşüş ise ve giriş sinyali 'SAT' ise, bu güçlü bir teyittir. Kararın 'SAT' olabilir.
         - **Eğer trend ile sinyal arasında bir uyumsuzluk varsa (örn: Trend yükselirken giriş sinyali 'SAT' ise) VEYA ana trend 'Yönsüz' ise, kararını 'BEKLE' olarak ver.**
     3.  **Gerekçeni Açıkla:** Kararının arkasındaki mantığı, her iki zaman aralığından da bahsederek kısaca açıkla.
-
     ## SAĞLANAN VERİLER:
     - Sembol: {symbol}
     - Anlık Fiyat: {price}
-
     ### Ana Trend Verileri ({trend_timeframe})
     {trend_indicator_text}
-
     ### Giriş Sinyali Verileri ({entry_timeframe})
     {entry_indicator_text}
-
     ## İSTENEN JSON ÇIKTI FORMATI:
     Kararını ve gerekçeni, aşağıda formatı verilen JSON çıktısı olarak sun. Başka hiçbir açıklama yapma.
     ```json
@@ -118,15 +121,12 @@ def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indi
     return f"""
     Sen, uzman bir trading analistisin.
     Aşağıda sana '{symbol}' adlı kripto para için '{timeframe}' zaman aralığında toplanmış veriler sunulmuştur.
-
     GÖREVİN: Bu verileri analiz ederek 'AL', 'SAT' veya 'BEKLE' şeklinde net bir tavsiye kararı ver.
     Kararını ve gerekçeni, aşağıda formatı verilen JSON çıktısı olarak sun. Başka hiçbir açıklama yapma.
-
     SAĞLANAN VERİLER:
     - Anlık Fiyat: {price}
     Teknik Göstergeler:
     {indicator_text}
-
     İSTENEN JSON ÇIKTI FORMATI:
     ```json
     {{
@@ -186,12 +186,9 @@ def handle_new_analysis():
             trend_indicators_data = trend_indicators_result["data"]
             
             final_prompt = create_mta_analysis_prompt(
-                symbol=unified_symbol,
-                price=current_price,
-                entry_timeframe=entry_timeframe,
-                entry_indicators=entry_indicators_data,
-                trend_timeframe=trend_timeframe,
-                trend_indicators=trend_indicators_data
+                symbol=unified_symbol, price=current_price,
+                entry_timeframe=entry_timeframe, entry_indicators=entry_indicators_data,
+                trend_timeframe=trend_timeframe, trend_indicators=trend_indicators_data
             )
         else:
             final_prompt = create_final_analysis_prompt(unified_symbol, entry_timeframe, current_price, entry_indicators_data)
@@ -212,10 +209,8 @@ def handle_new_analysis():
         if recommendation in ["AL", "SAT"]:
             price_from_report = parsed_data.get('data', {}).get('price', current_price)
             handle_trade_confirmation(
-                recommendation=recommendation,
-                trade_symbol=parsed_data.get('symbol'),
-                current_price=price_from_report,
-                timeframe=entry_timeframe, 
+                recommendation=recommendation, trade_symbol=parsed_data.get('symbol'),
+                current_price=price_from_report, timeframe=entry_timeframe, 
                 parsed_data=parsed_data
             )
         else:
@@ -275,42 +270,157 @@ Yukarıdaki {len(market_data_batch)} sembolün her birini yeni ve kapsamlı kura
 ```"""
     return prompt_header + data_section + prompt_footer
 
+def handle_trade_confirmation(recommendation, trade_symbol, current_price, timeframe, auto_confirm=False, parsed_data=None):
+    if not isinstance(current_price, (int, float)) or current_price <= 0:
+        logging.error("Geçersiz fiyat bilgisi, işlem iptal edildi.")
+        return
+
+    prompt_message = f">>> [FIRSAT] {trade_symbol} @ {current_price:.4f} için '{recommendation}' tavsiyesi verildi. İşlem açılsın mı? (e/h): "
+    user_onay = "e" if auto_confirm else input(prompt_message).lower()
+    
+    if user_onay == "e":
+        if auto_confirm: logging.info(f"İşlem otomatik olarak onaylandı: {trade_symbol}")
+        try:
+            with positions_lock:
+                if len(open_positions_managed_by_bot) >= config.MAX_CONCURRENT_TRADES:
+                    print("\n### UYARI: Maksimum pozisyon limitine ulaşıldı. ###")
+                    return
+
+            trade_side = "buy" if "AL" in recommendation else "sell"
+            
+            atr_result = get_atr_value.invoke({"symbol_and_timeframe": f"{trade_symbol},{timeframe}"})
+            if atr_result.get("status") != "success":
+                print(f"### HATA: ATR değeri alınamadı: {atr_result.get('message')} ###")
+                return
+            
+            atr_value = atr_result['value']
+            sl_distance = atr_value * config.ATR_MULTIPLIER_SL
+            stop_loss_price = current_price - sl_distance if trade_side == "buy" else current_price + sl_distance
+
+            balance_result = get_wallet_balance.invoke({})
+            if balance_result.get("status") != "success":
+                print(f"### HATA: Cüzdan bakiyesi alınamadı: {balance_result.get('message')} ###")
+                return
+            wallet_balance = balance_result.get('balance', 0.0)
+
+            risk_amount_usd = wallet_balance * (config.RISK_PER_TRADE_PERCENT / 100)
+            sl_price_diff = abs(current_price - stop_loss_price)
+            if sl_price_diff <= 0:
+                print(f"HATA: Stop-loss mesafesi geçersiz ({sl_price_diff}), pozisyon açılamıyor.")
+                return
+            
+            trade_amount = risk_amount_usd / sl_price_diff
+            
+            notional_value = trade_amount * current_price
+            required_margin = notional_value / config.LEVERAGE
+
+            logging.info(f"Dinamik Pozisyon Hesabı: Bakiye={wallet_balance:.2f} USDT, Risk={risk_amount_usd:.2f} USDT, Pozisyon Büyüklüğü={notional_value:.2f} USDT, Gerekli Marjin={required_margin:.2f} USDT")
+
+            if required_margin > wallet_balance:
+                print(f"### UYARI: Gerekli marjin ({required_margin:.2f} USDT) mevcut bakiyeden ({wallet_balance:.2f} USDT) fazla. İşlem iptal edildi.")
+                return
+
+            tp_distance = sl_distance * config.RISK_REWARD_RATIO_TP
+            take_profit_price = current_price + tp_distance if trade_side == "buy" else current_price - tp_distance
+            
+            position_to_open = {
+                "symbol": trade_symbol, "side": trade_side, "amount": trade_amount, 
+                "stop_loss": stop_loss_price, "take_profit": take_profit_price, "leverage": config.LEVERAGE,
+                "price": current_price if config.DEFAULT_ORDER_TYPE == 'LIMIT' else None
+            }
+            
+            result_str = execute_trade_order.invoke(position_to_open)
+            print(f"İşlem Sonucu: {result_str}")
+
+            if "başarı" in result_str.lower() or "simülasyon" in result_str.lower():
+                final_entry_price = position_to_open.get('price') or current_price
+                managed_position_details = {
+                    "symbol": trade_symbol, "side": trade_side, "amount": trade_amount, 
+                    "entry_price": final_entry_price, "timeframe": timeframe, "leverage": config.LEVERAGE,
+                    "stop_loss": stop_loss_price, "take_profit": take_profit_price
+                }
+                with positions_lock:
+                    open_positions_managed_by_bot.append(managed_position_details)
+                    save_positions_to_file()
+                print("\n+++ YENİ POZİSYON AÇILDI VE BOT HAFIZASINA KAYDEDİLDİ +++")
+                print(json.dumps(managed_position_details, indent=2))
+            else:
+                print(f"\n--- İŞLEM BAŞARISIZ OLDU. Dönen Mesaj: {result_str} ---")
+
+        except Exception as e:
+            logging.error(f"İşlem hazırlığı sırasında bir hata oluştu: {e}", exc_info=True)
+
 def check_and_manage_positions_thread_safe():
     global open_positions_managed_by_bot
     positions_to_close = []
+    positions_to_update = False
+
     with positions_lock:
-        positions_to_iterate = open_positions_managed_by_bot[:]
-    
+        positions_to_iterate = [dict(p) for p in open_positions_managed_by_bot]
+
     for i, position in enumerate(positions_to_iterate):
         try:
             current_price = _fetch_price_natively(position["symbol"])
-            if current_price is None:
-                continue
+            if current_price is None: continue
 
-            side, sl_price, tp_price = position.get("side"), position.get("stop_loss"), position.get("take_profit")
-            if not all([side, sl_price, tp_price]) or sl_price == 0 or tp_price == 0: continue
+            side = position.get("side")
+            sl_price = position.get("stop_loss", 0.0)
+            tp_price = position.get("take_profit", 0.0)
+            
+            if sl_price > 0 and tp_price > 0:
+                if (side == "buy" and (current_price <= sl_price or current_price >= tp_price)) or \
+                   (side == "sell" and (current_price >= sl_price or current_price <= tp_price)):
+                    reason = "Zarar Durdur (SL)" if (side == 'buy' and current_price <= sl_price) or (side == 'sell' and current_price >= sl_price) else "Kar Al (TP)"
+                    logging.info(f"\n[AUTO] POZİSYON HEDEFE ULAŞTI ({reason}): {position['symbol']} @ {current_price}")
+                    positions_to_close.append(i)
+                    continue
 
-            if (side == "buy" and (current_price <= sl_price or current_price >= tp_price)) or \
-               (side == "sell" and (current_price >= sl_price or current_price <= tp_price)):
-                reason = "Zarar Durdur (SL)" if (current_price <= sl_price if side == 'buy' else current_price >= sl_price) else "Kar Al (TP)"
-                logging.info(f"\n[AUTO] POZİSYON HEDEFE ULAŞTI ({reason}): {position['symbol']} @ {current_price}")
-                positions_to_close.append((i, position))
-        except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
-            logging.error(f"[AUTO-HATA] Pozisyon kontrolü sırasında hata: {e} - Pozisyon: {position}")
+            if config.USE_TRAILING_STOP_LOSS:
+                entry_price = position.get("entry_price", 0.0)
+                if entry_price == 0: continue
+                
+                if 'initial_stop_loss' not in position:
+                    position['initial_stop_loss'] = sl_price
+                
+                initial_sl = position['initial_stop_loss']
+                
+                profit_perc = ((current_price - entry_price) / entry_price) * 100 * (1 if side == 'buy' else -1)
+                
+                if profit_perc > config.TRAILING_STOP_ACTIVATION_PERCENT:
+                    original_sl_distance = abs(entry_price - initial_sl)
+                    new_sl_price = 0.0
+                    
+                    if side == 'buy':
+                        new_sl_price = current_price - original_sl_distance
+                        if new_sl_price > sl_price:
+                            logging.info(f"[TRAIL-SL] {position['symbol']} için yeni SL tetiklendi: {sl_price:.4f} -> {new_sl_price:.4f}")
+                            result = update_stop_loss_order.invoke({"symbol": position['symbol'], "side": side, "amount": position['amount'], "new_stop_price": new_sl_price})
+                            if "Başarılı" in result or "Simülasyon" in result:
+                                open_positions_managed_by_bot[i]['stop_loss'] = new_sl_price
+                                positions_to_update = True
+                    
+                    elif side == 'sell':
+                        new_sl_price = current_price + original_sl_distance
+                        if new_sl_price < sl_price:
+                            logging.info(f"[TRAIL-SL] {position['symbol']} için yeni SL tetiklendi: {sl_price:.4f} -> {new_sl_price:.4f}")
+                            result = update_stop_loss_order.invoke({"symbol": position['symbol'], "side": side, "amount": position['amount'], "new_stop_price": new_sl_price})
+                            if "Başarılı" in result or "Simülasyon" in result:
+                                open_positions_managed_by_bot[i]['stop_loss'] = new_sl_price
+                                positions_to_update = True
+        except Exception as e:
+            logging.error(f"Pozisyon kontrolü sırasında hata: {e} - Pozisyon: {position}", exc_info=True)
+
+    with positions_lock:
+        if positions_to_close:
+            for index in sorted(positions_to_close, reverse=True):
+                if index < len(open_positions_managed_by_bot):
+                    pos_to_close = open_positions_managed_by_bot.pop(index)
+                    close_side = 'sell' if pos_to_close['side'] == 'buy' else 'buy'
+                    execute_trade_order.invoke({"symbol": pos_to_close['symbol'], "side": close_side, "amount": pos_to_close['amount']})
+            positions_to_update = True
     
-    for index, pos_to_close in sorted(positions_to_close, reverse=True):
-        close_side = 'sell' if pos_to_close['side'] == 'buy' else 'buy'
-        execute_trade_order.invoke({
-            "symbol": pos_to_close['symbol'], 
-            "side": close_side, 
-            "amount": pos_to_close['amount']
-        })
-        with positions_lock:
-            if index < len(open_positions_managed_by_bot) and open_positions_managed_by_bot[index] == pos_to_close:
-                open_positions_managed_by_bot.pop(index)
-                save_positions_to_file()
-                logging.info(f"Bot hafızasından silindi: {pos_to_close['symbol']}")
-
+        if positions_to_update:
+            save_positions_to_file()
 
 def sync_and_display_positions():
     global open_positions_managed_by_bot
@@ -335,8 +445,7 @@ def sync_and_display_positions():
                         side = pos.get('side', 'buy')
                         
                         pnl = (current_price - entry_price) * amount
-                        if side == 'sell':
-                            pnl = -pnl
+                        if side == 'sell': pnl = -pnl
                         
                         margin = (entry_price * amount) / leverage if leverage > 0 else (entry_price * amount)
                         pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
@@ -362,35 +471,45 @@ def sync_and_display_positions():
         else:
             print(f"--- Borsada Bulunan Açık Pozisyonlar: {len(exchange_positions)} ---")
             with positions_lock:
-                old_managed_positions_map = {p['symbol']: p for p in open_positions_managed_by_bot}
+                managed_positions_map = {p['symbol']: p for p in open_positions_managed_by_bot}
             
             for pos_data in exchange_positions:
-                unified_symbol = pos_data.get('symbol')
+                # <<< DÜZELTME: Borsadan gelen sembolü standart formata çeviriyoruz >>>
+                raw_symbol = pos_data.get('symbol')
+                unified_symbol = _get_unified_symbol(raw_symbol)
+
                 side = 'buy' if pos_data.get('side', 'long') == 'long' else 'sell'
                 amount = float(pos_data.get('contracts', 0.0) or 0.0)
-                entry_price = float(pos_data.get('entryPrice', 0.0) or 0.0)
                 pnl = float(pos_data.get('unrealizedPnl', 0.0) or 0.0)
                 margin = float(pos_data.get('initialMargin', 0.0) or pos_data.get('margin', 0.0) or 0.0)
-                
                 pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
                 pnl_status = "⬆️ KAR" if pnl >= 0 else "⬇️ ZARAR"
                 notional_value = float(pos_data.get('notional', 0.0) or 0.0)
 
                 print(f"  - {unified_symbol} ({side.upper()}) | Büyüklük: {notional_value:.2f} USDT | PNL: {pnl:.2f} USDT ({pnl_percentage:.2f}%) [{pnl_status}]")
                 
-                if unified_symbol in old_managed_positions_map:
-                    old_pos = old_managed_positions_map[unified_symbol]
-                    old_pos['amount'] = amount
-                    updated_managed_list.append(old_pos)
+                if unified_symbol in managed_positions_map:
+                    # Pozisyon yönetiliyor, listeye güncel halini ekle
+                    managed_pos = managed_positions_map.pop(unified_symbol) # Eşleşenleri haritadan çıkar
+                    managed_pos['amount'] = amount # Miktarı güncelle
+                    updated_managed_list.append(managed_pos)
                 else:
+                    # Bu pozisyon bot tarafından yönetilmiyor
                     add_to_bot = input(f"      >>> Bu pozisyon bot tarafından yönetilmiyor. Yönetime eklensin mi? (evet/hayır): ").lower()
                     if add_to_bot == 'evet':
                         timeframe = input(f"      >>> Orijinal zaman aralığını girin (örn: 1h, 15m): ").lower().strip() or "1h"
                         leverage = float(pos_data.get('leverage') or config.LEVERAGE)
+                        entry_price = float(pos_data.get('entryPrice', 0.0) or 0.0)
                         
+                        # Manuel eklenen pozisyona SL/TP sormak en sağlıklısı olur
+                        sl_input = input(f"      >>> Stop-Loss fiyatını girin (boş bırakmak için enter): ")
+                        tp_input = input(f"      >>> Take-Profit fiyatını girin (boş bırakmak için enter): ")
+
                         managed_position = {
                             "symbol": unified_symbol, "side": side, "amount": amount,
-                            "entry_price": entry_price, "timeframe": timeframe, "leverage": leverage
+                            "entry_price": entry_price, "timeframe": timeframe, "leverage": leverage,
+                            "stop_loss": float(sl_input) if sl_input else 0.0,
+                            "take_profit": float(tp_input) if tp_input else 0.0,
                         }
                         updated_managed_list.append(managed_position)
                         print(f"      +++ {unified_symbol} pozisyonu bot yönetimine eklendi.")
@@ -402,7 +521,6 @@ def sync_and_display_positions():
     except Exception as e:
         logging.error(f"Senkronizasyon sırasında hata oluştu: {e}", exc_info=True)
 
-
 def _execute_single_scan_cycle():
     logging.info("--- Yeni Tarama Döngüsü Başlatılıyor ---")
     try:
@@ -412,7 +530,6 @@ def _execute_single_scan_cycle():
                 return
 
         symbols_to_process = get_top_gainers_losers(config.PROACTIVE_SCAN_TOP_N) if config.PROACTIVE_SCAN_USE_GAINERS_LOSERS else [{'symbol': s} for s in config.PROACTIVE_SCAN_COIN_LIST]
-
         if not symbols_to_process:
             logging.warning("Taranacak sembol bulunamadı.")
             return
@@ -421,33 +538,25 @@ def _execute_single_scan_cycle():
             open_symbols = {p['symbol'] for p in open_positions_managed_by_bot}
         
         symbols_to_process = [s for s in symbols_to_process if s.get('symbol') and s['symbol'] not in open_symbols]
-        
         if not symbols_to_process:
             logging.info("Tüm potansiyel semboller için zaten açık pozisyon var.")
             return
 
         logging.info(f"Analiz edilecek {len(symbols_to_process)} sembol: {', '.join([s['symbol'] for s in symbols_to_process])}")
-
         market_data_batch = []
         
         for item in symbols_to_process:
-            symbol = item['symbol']
-            price = item.get('price')
+            symbol, price = item['symbol'], item.get('price')
             if price is None:
                 logging.warning(f"{symbol} için fiyat bilgisi Gainer/Loser listesinden alınamadı, atlanıyor.")
                 continue
 
-            successful_result = None
-            successful_timeframe = None
-
+            successful_result, successful_timeframe = None, None
             for timeframe in config.PROACTIVE_SCAN_TIMEFRAMES:
                 logging.info(f"...Teknik veri toplanıyor: {symbol} (Zaman aralığı: {timeframe})")
-                
                 tech_data_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{symbol},{timeframe}"})
-
                 if tech_data_result.get("status") == "success":
-                    successful_result = tech_data_result
-                    successful_timeframe = timeframe
+                    successful_result, successful_timeframe = tech_data_result, timeframe
                     logging.info(f"+++ Veri başarıyla toplandı: {symbol} @ {timeframe}")
                     break
                 else:
@@ -455,12 +564,7 @@ def _execute_single_scan_cycle():
                     time.sleep(1)
 
             if successful_result:
-                market_data_batch.append({
-                    "symbol": symbol,
-                    "price": price,
-                    "indicators": successful_result["data"],
-                    "timeframe": successful_timeframe
-                })
+                market_data_batch.append({"symbol": symbol, "price": price, "indicators": successful_result["data"], "timeframe": successful_timeframe})
             else:
                 logging.error(f"Tüm zaman aralıkları denendi, {symbol} için veri alınamadı, bu sembol atlanıyor.")
 
@@ -497,10 +601,8 @@ def _execute_single_scan_cycle():
                         break
                 
                 handle_trade_confirmation(
-                    recommendation=opportunity.get('recommendation'),
-                    trade_symbol=opportunity.get('symbol'),
-                    current_price=opportunity.get('price'),
-                    timeframe=opportunity.get('timeframe'),
+                    recommendation=opportunity.get('recommendation'), trade_symbol=opportunity.get('symbol'),
+                    current_price=opportunity.get('price'), timeframe=opportunity.get('timeframe'),
                     auto_confirm=config.PROACTIVE_SCAN_AUTO_CONFIRM
                 )
         else:
@@ -539,82 +641,9 @@ def parse_agent_response(response: str) -> dict:
         logging.error(f"JSON ayrıştırma hatası. Gelen Yanıt: {response}")
         return None
 
-def handle_trade_confirmation(recommendation, trade_symbol, current_price, timeframe, auto_confirm=False, parsed_data=None):
-    if not isinstance(current_price, (int, float)) or current_price <= 0:
-        logging.error(f"Geçersiz fiyat bilgisi ({current_price}), işlem iptal edildi.")
-        return
-
-    prompt_message = f">>> [FIRSAT] {trade_symbol} @ {current_price:.4f} için '{recommendation}' tavsiyesi verildi. İşlem açılsın mı? (evet/hayır): "
-    user_onay = "evet" if auto_confirm else input(prompt_message).lower()
-    
-    if user_onay == "evet":
-        if auto_confirm:
-            logging.info(f"İşlem otomatik olarak onaylandı: {trade_symbol}")
-        try:
-            with positions_lock:
-                if len(open_positions_managed_by_bot) >= config.MAX_CONCURRENT_TRADES:
-                    print("\n### UYARI: Maksimum pozisyon limitine ulaşıldı. ###")
-                    return
-
-            trade_side = "buy" if "AL" in recommendation else "sell"
-            leverage = config.LEVERAGE
-            margin_usdt = config.TRADE_MARGIN_USDT
-            position_value_usdt = margin_usdt * leverage
-            trade_amount = position_value_usdt / current_price
-            
-            stop_loss_price, take_profit_price = 0, 0
-            
-            if config.USE_ATR_FOR_SLTP:
-                atr_result = get_atr_value.invoke({"symbol_and_timeframe": f"{trade_symbol},{timeframe}"})
-                if atr_result.get("status") != "success":
-                    print(f"### HATA: ATR değeri alınamadı: {atr_result.get('message')} ###")
-                    return
-                
-                atr_value = atr_result['value']
-                stop_loss_distance = atr_value * config.ATR_MULTIPLIER_SL
-                take_profit_distance = stop_loss_distance * config.RISK_REWARD_RATIO_TP
-                
-                if trade_side == "buy":
-                    stop_loss_price = current_price - stop_loss_distance
-                    take_profit_price = current_price + take_profit_distance
-                else:
-                    stop_loss_price = current_price + stop_loss_distance
-                    take_profit_price = current_price - take_profit_distance
-            
-            position_to_open = {
-                "symbol": trade_symbol, "side": trade_side, "amount": trade_amount, 
-                "stop_loss": stop_loss_price, "take_profit": take_profit_price, "leverage": leverage
-            }
-            
-            limit_price = None
-            if config.DEFAULT_ORDER_TYPE == 'LIMIT':
-                limit_price = current_price
-                position_to_open['price'] = limit_price
-
-            result_str = execute_trade_order.invoke(position_to_open)
-            print(f"İşlem Sonucu: {result_str}")
-
-            if "başarı" in result_str.lower() or "simülasyon" in result_str.lower():
-                final_entry_price = limit_price if limit_price else current_price
-                managed_position_details = {
-                    "symbol": trade_symbol, "side": trade_side, "amount": trade_amount, 
-                    "entry_price": final_entry_price, "timeframe": timeframe, "leverage": leverage,
-                    "stop_loss": stop_loss_price, "take_profit": take_profit_price
-                }
-                with positions_lock:
-                    open_positions_managed_by_bot.append(managed_position_details)
-                    save_positions_to_file()
-                print("\n+++ YENİ POZİSYON AÇILDI VE BOT HAFIZASINA KAYDEDİLDİ +++")
-                print(json.dumps(managed_position_details, indent=2))
-            else:
-                print(f"\n--- İŞLEM BAŞARISIZ OLDU. Dönen Mesaj: {result_str} ---")
-
-        except Exception as e:
-            logging.error(f"İşlem hazırlığı sırasında bir hata oluştu: {e}", exc_info=True)
-
 def handle_manage_position():
-    global open_positions_managed_by_bot
     with positions_lock:
+        load_positions_from_file()
         if not open_positions_managed_by_bot:
             print("Yönetilecek açık pozisyon bulunmuyor.")
             return
@@ -729,7 +758,6 @@ def main():
             break
         else:
             print("Geçersiz seçim. Lütfen menüden bir seçenek girin.")
-            time.sleep(1)
 
 if __name__ == "__main__":
     main()

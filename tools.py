@@ -68,7 +68,6 @@ def _get_unified_symbol(symbol_input: str) -> str:
         return f"{base}/USDT"
     return f"{unified_symbol}/USDT"
 
-# <<< DÜZELTME: Tür ipucu (type hint) modern söz dizimi ile güncellendi >>>
 def _parse_symbol_timeframe_input(input_str: str) -> tuple[str, str]:
     """Girdiden sembol ve zaman aralığını ayrıştırır."""
     timeframe = "1h"
@@ -95,6 +94,59 @@ def _fetch_price_natively(symbol: str) -> float | None:
         return float(ticker.get("last")) if ticker.get("last") is not None else None
     except Exception:
         return None
+
+@tool
+def get_wallet_balance(quote_currency: str = "USDT") -> dict:
+    """Vadeli işlem cüzdanındaki belirtilen para biriminin (genellikle USDT) toplam bakiyesini alır."""
+    if not exchange or config.DEFAULT_MARKET_TYPE != 'future':
+        return {"status": "error", "message": "Bu fonksiyon sadece vadeli işlem modunda çalışır."}
+    try:
+        balance_data = exchange.fetch_balance()
+        total_balance = balance_data.get(quote_currency, {}).get('total', 0.0)
+        if total_balance is None: total_balance = 0.0
+        logging.info(f"Cüzdan Bakiyesi ({quote_currency}): {total_balance}")
+        return {"status": "success", "balance": float(total_balance)}
+    except Exception as e:
+        logging.error(f"Cüzdan bakiyesi alınırken hata: {e}")
+        return {"status": "error", "message": f"Bakiye alınamadı. Detay: {e}"}
+
+@tool
+def update_stop_loss_order(symbol: str, side: str, amount: float, new_stop_price: float) -> str:
+    """Bir pozisyon için mevcut stop-loss emirlerini iptal eder ve yenisini oluşturur."""
+    if not exchange:
+        return "HATA: Borsa bağlantısı başlatılmamış."
+    
+    if not config.LIVE_TRADING:
+        logging.info(f"--- SİMÜLASYON: SL güncellemesi -> {symbol} @ {new_stop_price} ---")
+        return f"Simülasyon: {symbol} için SL emri {new_stop_price} olarak güncellendi."
+    
+    logging.info(f"--- SL GÜNCELLEME SÜRECİ BAŞLATILDI: {symbol} ---")
+    unified_symbol = _get_unified_symbol(symbol)
+    try:
+        open_orders = exchange.fetch_open_orders(unified_symbol)
+        stop_orders = [o for o in open_orders if o.get('type') in ['stop_market', 'stop'] and o.get('reduceOnly')]
+        
+        for order in stop_orders:
+            try:
+                exchange.cancel_order(order['id'], unified_symbol)
+                logging.info(f"Mevcut SL emri ({order['id']}) iptal edildi.")
+            except Exception as e:
+                logging.error(f"SL emri ({order['id']}) iptal edilirken hata: {e}")
+        
+        opposite_side = 'sell' if side == 'buy' else 'buy'
+        formatted_amount = exchange.amount_to_precision(unified_symbol, amount)
+        
+        if new_stop_price > 0:
+            params_sl = {'stopPrice': new_stop_price, 'reduceOnly': True}
+            exchange.create_order(unified_symbol, 'STOP_MARKET', opposite_side, formatted_amount, None, params_sl)
+            logging.info(f"+++ YENİ ZARAR DURDUR (SL) EMRİ AYARLANDI: {new_stop_price} +++")
+            return f"Başarılı: {unified_symbol} için SL emri {new_stop_price} olarak güncellendi."
+        else:
+            return "Hata: Geçersiz yeni stop-loss fiyatı."
+            
+    except Exception as e:
+        logging.critical(f"SL güncellenirken kritik bir hata oluştu: {e}")
+        return f"HATA: SL güncellenemedi. Manuel kontrol gerekebilir! Detay: {e}"
 
 @tool
 def get_market_price(symbol: str) -> str:
@@ -191,7 +243,6 @@ def get_top_gainers_losers(top_n: int = 5) -> list:
     """
     Binance Futures piyasasındaki 24 saatlik değişime göre en çok değer kazanan ve kaybeden
     ilk 'top_n' adet coini TEK BİR API ÇAĞRISI ile verimli bir şekilde alır.
-    Dönen liste, her bir coin için sembol, fiyat ve yüzde değişimini içerir.
     """
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future':
         logging.error("HATA: Gainer/Loser fonksiyonu sadece 'future' piyasası modunda çalışır.")
@@ -312,64 +363,3 @@ def get_open_positions_from_exchange(tool_input: str = "") -> list:
     except Exception as e:
         logging.error(f"Borsadan pozisyonlar alınırken hata oluştu: {e}")
         return []
-
-@tool
-def get_open_orders(symbol: str) -> list:
-    """Belirtilen bir sembol için borsadaki mevcut açık emirleri (SL/TP dahil) çeker."""
-    if not exchange:
-        logging.error("get_open_orders: Borsa bağlantısı başlatılmamış.")
-        return []
-    try:
-        unified_symbol = _get_unified_symbol(symbol)
-        open_orders = exchange.fetch_open_orders(unified_symbol)
-        simplified_orders = []
-        for order in open_orders:
-            simplified_orders.append({
-                'id': order.get('id'),
-                'type': order.get('type', '').lower(),
-                'side': order.get('side'),
-                'price': order.get('price'),
-                'stopPrice': order.get('stopPrice'),
-                'amount': order.get('amount')
-            })
-        return simplified_orders
-    except Exception as e:
-        logging.error(f"Açık emirler alınırken hata oluştu ({symbol}): {e}")
-        return []
-
-@tool
-def update_sl_tp_orders(symbol: str, side: str, amount: float, new_stop_loss: float = None, new_take_profit: float = None) -> str:
-    """Bir pozisyon için mevcut SL/TP emirlerini iptal eder ve yenilerini oluşturur."""
-    if not exchange or not config.LIVE_TRADING:
-        return "HATA: Bu araç sadece canlı işlem modunda çalışır."
-    
-    logging.info(f"--- SL/TP GÜNCELLEME SÜRECİ BAŞLATILDI: {symbol} ---")
-    unified_symbol = _get_unified_symbol(symbol)
-    try:
-        open_orders = exchange.fetch_open_orders(unified_symbol)
-        stop_orders = [o for o in open_orders if o.get('type') in ['stop_market', 'take_profit_market']]
-        
-        for order in stop_orders:
-            try:
-                exchange.cancel_order(order['id'], unified_symbol)
-                logging.info(f"Mevcut {order.get('type')} emri ({order['id']}) iptal edildi.")
-            except Exception as e:
-                logging.error(f"Emir ({order['id']}) iptal edilirken hata: {e}")
-        
-        opposite_side = 'sell' if side == 'buy' else 'buy'
-        formatted_amount = exchange.amount_to_precision(unified_symbol, amount)
-        
-        if new_stop_loss and new_stop_loss > 0:
-            params_sl = {'stopPrice': new_stop_loss, 'reduceOnly': True}
-            exchange.create_order(unified_symbol, 'STOP_MARKET', opposite_side, formatted_amount, None, params_sl)
-            logging.info(f"+++ YENİ ZARAR DURDUR (SL) EMRİ AYARLANDI: {new_stop_loss} +++")
-        
-        if new_take_profit and new_take_profit > 0:
-            params_tp = {'stopPrice': new_take_profit, 'reduceOnly': True}
-            exchange.create_order(unified_symbol, 'TAKE_PROFIT_MARKET', opposite_side, formatted_amount, None, params_tp)
-            logging.info(f"+++ YENİ KAR AL (TP) EMRİ AYARLANDI: {new_take_profit} +++")
-            
-        return "SL/TP emirleri başarıyla güncellendi."
-    except Exception as e:
-        logging.critical(f"SL/TP güncellenirken kritik bir hata oluştu: {e}")
-        return f"HATA: SL/TP güncellenemedi. Manuel kontrol gerekebilir! Detay: {e}"
