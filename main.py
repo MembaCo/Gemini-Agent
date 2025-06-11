@@ -11,12 +11,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain import hub
-from distutils.util import strtobool
 
 from tools import (
     get_market_price, get_technical_indicators, execute_trade_order,
     initialize_exchange, get_open_positions_from_exchange, get_atr_value,
-    _get_unified_symbol, get_top_gainers_losers, _fetch_price_natively
+    _get_unified_symbol, get_top_gainers_losers, _fetch_price_natively,
+    str_to_bool
 )
 import config
 from config import APP_VERSION
@@ -39,7 +39,7 @@ try:
     prompt_template = hub.pull("hwchase17/react")
     agent = create_react_agent(llm=llm, tools=agent_tools, prompt=prompt_template)
     agent_executor = AgentExecutor(
-        agent=agent, tools=agent_tools, verbose=strtobool(os.getenv("AGENT_VERBOSE", "True")),
+        agent=agent, tools=agent_tools, verbose=str_to_bool(os.getenv("AGENT_VERBOSE", "True")),
         handle_parsing_errors="Lütfen JSON formatında geçerli bir yanıt ver.",
         max_iterations=5
     )
@@ -47,7 +47,6 @@ except Exception as e:
     logging.critical(f"LLM veya Agent başlatılırken hata oluştu: {e}")
     exit()
 
-# <<< HATA DÜZELTME: Eksik fonksiyonlar buraya eklendi >>>
 def save_positions_to_file():
     with positions_lock:
         try:
@@ -73,12 +72,8 @@ def load_positions_from_file():
                 open_positions_managed_by_bot = []
 
 def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, entry_indicators: dict, trend_timeframe: str, trend_indicators: dict) -> str:
-    """
-    Çoklu Zaman Aralığı (MTA) analizi için Gemini'ye özel bir prompt oluşturur.
-    """
     entry_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in entry_indicators.items()])
     trend_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in trend_indicators.items()])
-
     return f"""
     Sen, Çoklu Zaman Aralığı (MTA) konusunda uzmanlaşmış profesyonel bir trading analistisin.
     Görevin, sana sunulan iki farklı zaman aralığına ait veriyi birleştirerek kapsamlı bir analiz yapmak ve net bir ticaret kararı ('AL', 'SAT' veya 'BEKLE') vermektir.
@@ -119,7 +114,6 @@ def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, 
     """
 
 def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indicators: dict) -> str:
-    """Tekli zaman aralığı analizi için standart prompt'u oluşturur."""
     indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in indicators.items()])
     return f"""
     Sen, uzman bir trading analistisin.
@@ -319,10 +313,6 @@ def check_and_manage_positions_thread_safe():
 
 
 def sync_and_display_positions():
-    """
-    Pozisyonları görüntüler. CANLI modda borsa ile senkronize olur.
-    SİMÜLASYON modunda ise sadece botun kendi hafızasındaki pozisyonları listeler.
-    """
     global open_positions_managed_by_bot
     print("\n--- Pozisyonlar Görüntüleniyor... ---")
 
@@ -414,7 +404,6 @@ def sync_and_display_positions():
 
 
 def _execute_single_scan_cycle():
-    """Proaktif tarama döngüsünün tek bir adımını çalıştırır."""
     logging.info("--- Yeni Tarama Döngüsü Başlatılıyor ---")
     try:
         with positions_lock:

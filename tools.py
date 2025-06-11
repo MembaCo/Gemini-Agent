@@ -9,9 +9,18 @@ import pandas_ta as ta
 import logging
 from dotenv import load_dotenv
 from langchain.tools import tool
-from distutils.util import strtobool
 
 import config
+
+def str_to_bool(val: str) -> bool:
+    """Metin bir değeri boolean'a çevirir."""
+    val = str(val).lower()
+    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+        return True
+    elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+        return False
+    else:
+        raise ValueError(f"Geçersiz doğruluk değeri: {val}")
 
 load_dotenv()
 exchange = None
@@ -20,7 +29,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def initialize_exchange(market_type: str = "spot"):
     """Global borsa nesnesini, belirtilen piyasa türü için ayarlar."""
     global exchange
-    use_testnet = strtobool(os.getenv("USE_TESTNET", "False"))
+    use_testnet = str_to_bool(os.getenv("USE_TESTNET", "False"))
     api_key = os.getenv("BINANCE_API_KEY")
     secret_key = os.getenv("BINANCE_SECRET_KEY")
     if not api_key or not secret_key:
@@ -31,7 +40,6 @@ def initialize_exchange(market_type: str = "spot"):
         "options": {"defaultType": market_type.lower()},
     }
     
-    # Testnet URL'sini manuel ayarlayarak daha sağlam hale getiriyoruz.
     if use_testnet and market_type.lower() == 'future':
         logging.warning("--- BINANCE FUTURES TESTNET KULLANILIYOR ---")
         exchange = ccxt.binance(config_data)
@@ -60,7 +68,8 @@ def _get_unified_symbol(symbol_input: str) -> str:
         return f"{base}/USDT"
     return f"{unified_symbol}/USDT"
 
-def _parse_symbol_timeframe_input(input_str: str) -> (str, str):
+# <<< DÜZELTME: Tür ipucu (type hint) modern söz dizimi ile güncellendi >>>
+def _parse_symbol_timeframe_input(input_str: str) -> tuple[str, str]:
     """Girdiden sembol ve zaman aralığını ayrıştırır."""
     timeframe = "1h"
     symbol = input_str
@@ -191,7 +200,6 @@ def get_top_gainers_losers(top_n: int = 5) -> list:
     logging.info(f"Binance Futures Gainer/Loser listesi tek çağrı ile verimli olarak çekiliyor (Top {top_n})...")
     
     try:
-        # CCXT'nin alt seviye API çağrı mekanizmasını kullanarak tüm 24 saatlik verileri tek seferde çekiyoruz.
         all_tickers_data = exchange.fapiPublicGetTicker24hr()
         
         if not all_tickers_data:
@@ -200,7 +208,6 @@ def get_top_gainers_losers(top_n: int = 5) -> list:
 
         processed_tickers = []
         for ticker in all_tickers_data:
-            # Sadece USDT paritelerini ve geçerli verileri filtrele
             symbol = ticker.get('symbol')
             if not symbol or not symbol.endswith('USDT'):
                 continue
@@ -211,22 +218,19 @@ def get_top_gainers_losers(top_n: int = 5) -> list:
             if price_change_percent is not None and last_price is not None:
                 try:
                     processed_tickers.append({
-                        'symbol': _get_unified_symbol(symbol), # Sembolü standart formata getir
+                        'symbol': _get_unified_symbol(symbol),
                         'percentage': float(price_change_percent),
                         'price': float(last_price)
                     })
                 except (ValueError, TypeError):
-                    # Veri tipi hatalı olanları atla
                     continue
         
         if not processed_tickers:
             logging.error("İşlenebilecek formatta bir ticker verisi bulunamadı.")
             return []
 
-        # Listeyi değişim yüzdesine göre büyükten küçüğe sırala
         processed_tickers.sort(key=lambda item: item['percentage'], reverse=True)
         
-        # En çok kazananlar (listenin başı) ve en çok kaybedenleri (listenin sonu) al
         gainers = processed_tickers[:top_n]
         losers = processed_tickers[-top_n:]
         
@@ -268,7 +272,7 @@ def execute_trade_order(symbol: str, side: str, amount: float, price: float = No
             logging.info(f"Limit Emir Gönderiliyor: Miktar={formatted_amount}, Fiyat={price}")
             order = exchange.create_limit_order(unified_symbol, side, formatted_amount, price, params)
         else:
-            order_type = 'market' # Fiyat yoksa piyasa emri olarak gönder
+            order_type = 'market'
             logging.info(f"Piyasa Emri Gönderiliyor: Miktar={formatted_amount}")
             order = exchange.create_market_order(unified_symbol, side, formatted_amount, params)
         
@@ -276,7 +280,7 @@ def execute_trade_order(symbol: str, side: str, amount: float, price: float = No
         
         if stop_loss and take_profit and exchange.options.get('defaultType') == 'future':
             opposite_side = 'sell' if side == 'buy' else 'buy'
-            time.sleep(0.5) # Borsanın pozisyonu görmesi için kısa bir bekleme
+            time.sleep(0.5)
             try:
                 sl_params = {'stopPrice': stop_loss, 'reduceOnly': True}
                 exchange.create_order(unified_symbol, 'STOP_MARKET', opposite_side, formatted_amount, None, sl_params)
