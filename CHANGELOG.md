@@ -27,3 +27,6 @@ Bu, projenin ilk kararlı sürümüdür. Çekirdek özellikler tamamlanmış ve 
 - **Mantık Hatası:** Başarılı bir işlem sonrası dönen `"başarıyla"` mesajının `"başarılı"` olarak kontrol edilmesi nedeniyle işlemin başarısız sanılması hatası düzeltildi. Artık başarılı işlemler doğru bir şekilde `managed_positions.json` dosyasına kaydediliyor.
 - **Veri Tipi Hatası:** Borsa senkronizasyonu sırasında `leverage` değerinin `None` gelmesi durumunda programın çökmesine neden olan `TypeError` hatası giderildi.
 - **Kurulum Hatası:** `@tool` ile işaretlenen fonksiyonlarda `docstring` eksikliği nedeniyle programın başlamamasına neden olan `ValueError` hatası düzeltildi.
+
+## [1.0.2] - 2025-06-11: 
+**Mimari İyileştirme:** Simülasyon modu ve pozisyon listeleme mantığı düzeltildi.

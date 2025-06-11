@@ -242,8 +242,50 @@ def check_and_manage_positions_thread_safe():
 
 
 def sync_and_display_positions():
+    """
+    Pozisyonları görüntüler. CANLI modda borsa ile senkronize olur.
+    SİMÜLASYON modunda ise sadece botun kendi hafızasındaki pozisyonları listeler.
+    """
     global open_positions_managed_by_bot
-    print("\n--- Borsadaki Açık Pozisyonlar Senkronize Ediliyor... ---")
+    print("\n--- Pozisyonlar Görüntüleniyor... ---")
+
+    # === YENİ MANTIK: SİMÜLASYON MODU KONTROLÜ ===
+    if not config.LIVE_TRADING:
+        print("--- SİMÜLASYON MODU AKTİF ---")
+        with positions_lock:
+            # Dosyadan en güncel hali tekrar oku, emin olmak için.
+            load_positions_from_file()
+            if not open_positions_managed_by_bot:
+                print("Bot tarafından yönetilen simüle edilmiş pozisyon bulunmuyor.")
+            else:
+                print(f"--- Bot Hafızasındaki Simüle Pozisyonlar: {len(open_positions_managed_by_bot)} ---")
+                for pos in open_positions_managed_by_bot:
+                    # Simüle PNL için anlık fiyatı çekip yaklaşık bir hesaplama yapalım
+                    pnl_info = ""
+                    try:
+                        price_str = get_market_price.invoke({"symbol": pos['symbol']})
+                        if "HATA" not in price_str:
+                            current_price = float(re.search(r'[\d\.]+$', price_str).group())
+                            pnl = (current_price - pos['entry_price']) * pos['amount']
+                            if pos['side'] == 'sell':
+                                pnl = -pnl
+                            
+                            # Marjin ve PNL yüzdesi hesaplaması (yaklaşık)
+                            margin = (pos['entry_price'] * pos['amount']) / pos['leverage'] if pos.get('leverage', 0) > 0 else (pos['entry_price'] * pos['amount'])
+                            pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
+                            pnl_status = "⬆️ KAR" if pnl >= 0 else "⬇️ ZARAR"
+                            pnl_info = f"| PNL (Yaklaşık): {pnl:.2f} USDT ({pnl_percentage:.2f}%) [{pnl_status}]"
+
+                    except Exception:
+                        pnl_info = "| PNL Hesaplanamadı"
+
+                    print(f"  - {pos['symbol']} ({pos['side'].upper()}) | Giriş: {pos['entry_price']:.4f} | Miktar: {pos['amount']:.4f} {pnl_info}")
+
+        print("--- Simülasyon gösterimi tamamlandı. ---")
+        return # Fonksiyondan çık, CANLI mod senkronizasyonunu yapma
+
+    # === ESKİ MANTIK: Sadece CANLI MODDA çalışacak kısım ===
+    print("--- CANLI MOD: Borsa ile Senkronize Ediliyor... ---")
     try:
         exchange_positions = get_open_positions_from_exchange.invoke({})
         if not isinstance(exchange_positions, list):
@@ -290,6 +332,7 @@ def sync_and_display_positions():
                         print(f"      +++ {unified_symbol} pozisyonu bot yönetimine eklendi.")
         
         with positions_lock:
+            # Canlı modda botun hafızası borsaya eşitlenir.
             open_positions_managed_by_bot = updated_managed_list
             save_positions_to_file()
         print("--- Senkronizasyon tamamlandı. ---")
@@ -298,7 +341,29 @@ def sync_and_display_positions():
         import traceback
         traceback.print_exc()
 
+def handle_manual_close(position, index):
+    print(f"UYARI: {position['symbol']} pozisyonunu manuel olarak kapatacaksınız.")
+    onay = input("Emin misiniz? (evet/hayır): ").lower()
+    if onay == 'evet':
+        close_side = 'sell' if position['side'] == 'buy' else 'buy'
+        # execute_trade_order simülasyon modunu kendi içinde yönetir.
+        result = execute_trade_order.invoke({
+            "symbol": position['symbol'], 
+            "side": close_side, 
+            "amount": position['amount']
+        })
+        print(f"Kapatma Sonucu: {result}")
+        
+        # Hem canlı hem de simülasyon modunda başarılıysa pozisyonu kaldır
+        if "başarı" in result.lower() or "simülasyon" in result.lower():
+            with positions_lock:
+                if index < len(open_positions_managed_by_bot) and open_positions_managed_by_bot[index] == position:
+                    open_positions_managed_by_bot.pop(index)
+                    save_positions_to_file()
+                print(f"+++ POZİSYON MANUEL OLARAK KAPATILDI: {position['symbol']} +++")
+
 def _execute_single_scan_cycle():
+    """Proaktif tarama döngüsünün tek bir adımını çalıştırır. Dinamik zaman aralığı düşüş (fallback) mantığı içerir."""
     logging.info("--- Yeni Tarama Döngüsü Başlatılıyor ---")
     try:
         with positions_lock:
@@ -324,7 +389,8 @@ def _execute_single_scan_cycle():
         logging.info(f"Analiz edilecek {len(symbols_to_process)} sembol: {', '.join([s['symbol'] for s in symbols_to_process])}")
 
         market_data_batch = []
-        timeframe = config.PROACTIVE_SCAN_TIMEFRAME
+        
+        # === DEĞİŞİKLİK BURADA: FALLBACK DÖNGÜSÜ ===
         for item in symbols_to_process:
             symbol = item['symbol']
             price = item.get('price')
@@ -332,21 +398,33 @@ def _execute_single_scan_cycle():
                 logging.warning(f"{symbol} için fiyat bilgisi Gainer/Loser listesinden alınamadı, atlanıyor.")
                 continue
 
-            logging.info(f"...Teknik veri toplanıyor: {symbol}")
-            
-            tech_data_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{symbol},{timeframe}"})
+            successful_result = None
+            successful_timeframe = None
 
-            if tech_data_result.get("status") != "success":
-                logging.warning(f"{symbol} için veri alınamadı: {tech_data_result.get('message')}")
-                time.sleep(1)
-                continue
-            
-            market_data_batch.append({
-                "symbol": symbol,
-                "price": price,
-                "indicators": tech_data_result["data"]
-            })
-            time.sleep(1)
+            for timeframe in config.PROACTIVE_SCAN_TIMEFRAMES:
+                logging.info(f"...Teknik veri toplanıyor: {symbol} (Zaman aralığı: {timeframe})")
+                
+                tech_data_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{symbol},{timeframe}"})
+
+                if tech_data_result.get("status") == "success":
+                    successful_result = tech_data_result
+                    successful_timeframe = timeframe
+                    logging.info(f"+++ Veri başarıyla toplandı: {symbol} @ {timeframe}")
+                    break  # Başarılı olunca iç döngüden çık
+                else:
+                    logging.warning(f"--- Veri alınamadı ({timeframe}): {tech_data_result.get('message')}. Sonraki zaman aralığı denenecek...")
+                    time.sleep(1) # API'yi yormamak için kısa bir bekleme
+
+            if successful_result:
+                market_data_batch.append({
+                    "symbol": symbol,
+                    "price": price,
+                    "indicators": successful_result["data"],
+                    "timeframe": successful_timeframe # Başarılı olan zaman aralığını da ekliyoruz
+                })
+            else:
+                logging.error(f"Tüm zaman aralıkları denendi, {symbol} için veri alınamadı, bu sembol atlanıyor.")
+        # === DEĞİŞİKLİK SONU ===
 
         if not market_data_batch:
             logging.info("Analiz edilecek geçerli veri bulunamadı.")
@@ -366,10 +444,11 @@ def _execute_single_scan_cycle():
         for rec in recommendations:
             print(f"  - {rec.get('symbol')}: {rec.get('recommendation')} ({rec.get('reason')})")
             if rec.get("recommendation") in ["AL", "SAT"]:
-                price_info = next((d['price'] for d in market_data_batch if d['symbol'] == rec.get('symbol')), None)
-                if price_info:
-                    rec['price'] = price_info
-                    rec['timeframe'] = timeframe
+                # Eşleşen veriyi market_data_batch'ten bul
+                source_data = next((d for d in market_data_batch if d['symbol'] == rec.get('symbol')), None)
+                if source_data:
+                    rec['price'] = source_data['price']
+                    rec['timeframe'] = source_data['timeframe'] # Analizin yapıldığı gerçek zaman aralığını ata
                     actionable_opportunities.append(rec)
         
         if actionable_opportunities:
@@ -384,7 +463,7 @@ def _execute_single_scan_cycle():
                     recommendation=opportunity.get('recommendation'),
                     trade_symbol=opportunity.get('symbol'),
                     current_price=opportunity.get('price'),
-                    timeframe=opportunity.get('timeframe'),
+                    timeframe=opportunity.get('timeframe'), # Doğru zaman aralığını aktar
                     auto_confirm=config.PROACTIVE_SCAN_AUTO_CONFIRM
                 )
         else:
@@ -394,7 +473,6 @@ def _execute_single_scan_cycle():
         logging.critical(f"Proaktif tarama döngüsünde KRİTİK HATA: {e}", exc_info=True)
     
     logging.info("--- Tarama Döngüsü Tamamlandı. ---")
-
 
 def run_proactive_scanner():
     logging.info("🚀 PROAKTİF TARAMA MODU BAŞLATILDI 🚀")

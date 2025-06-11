@@ -2,7 +2,7 @@
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.2"
 
 # === YAPAY ZEKA MODEL AYARI ===
 # Botun analiz ve karar verme için kullanacağı Gemini modelini belirtir.
@@ -72,12 +72,13 @@ MAX_CONCURRENT_TRADES = 3
 # Arka planda açık pozisyonların ne sıklıkla kontrol edileceğini belirtir (saniye cinsinden).
 POSITION_CHECK_INTERVAL_SECONDS = 120
 
+# Proaktif taramanın deneyeceği zaman aralıkları listesi.
+# İlkini dener, başarısız olursa bir sonrakine geçer.
+PROACTIVE_SCAN_TIMEFRAMES = ["15m", "1h", "4h"]
+
 # === PROAKTİF TARAMA AYARLARI ===
 # Proaktif Tarama modunun menüde gösterilip gösterilmeyeceğini belirler.
 PROACTIVE_SCAN_ENABLED = True
-
-# Proaktif taramanın kullanacağı zaman aralığı.
-PROACTIVE_SCAN_TIMEFRAME = "15m"
 
 # Proaktif tarama döngüsünün ne sıklıkla çalışacağını belirtir (saniye cinsinden).
 PROACTIVE_SCAN_INTERVAL_SECONDS = 900
