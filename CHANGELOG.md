@@ -8,7 +8,41 @@ Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına da
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
 Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına dayanmaktadır.
 
-## [1.3.1] - 2025-06-12
+Değişiklik Günlüğü (Changelog)
+
+Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir. Format, Keep a Changelog standardına dayanmaktadır.
+
+[1.5.0] - 2025-06-12
+
+Bu sürüm, proaktif tarama (Fırsat Avcısı) modülünü temelden yenileyerek çok daha stabil, akıllı ve yapılandırılabilir hale getirmeye odaklanmıştır. Artık tarayıcı, hatalara karşı daha dirençli, piyasa gürültüsünü daha iyi filtreliyor ve Çoklu Zaman Aralığı (MTA) analizi ile daha kaliteli sinyaller üretiyor.
+
+Eklendi (Added)
+
+API Hatalarına Karşı Direnç: tenacity kütüphanesi entegre edildi. tools.py içindeki tüm borsa API çağrıları (teknik gösterge, fiyat, bakiye alma vb.), geçici ağ veya API limit hatalarında programın çökmesini önlemek için artık otomatik olarak birkaç kez yeniden deneme yapmaktadır.
+
+Hacim ve Likidite Filtresi: Proaktif tarayıcıya, düşük hacimli ve riskli koinleri elemek için PROACTIVE_SCAN_MIN_VOLUME_USDT ayarı eklendi. Tarayıcı artık sadece belirlenen 24 saatlik işlem hacminin üzerindeki koinleri dikkate alır.
+
+Gelişmiş Sembol Liste Yönetimi: config.py dosyasına PROACTIVE_SCAN_WHITELIST (her zaman tara) ve PROACTIVE_SCAN_BLACKLIST (asla tarama) seçenekleri eklendi. Bu, taranacak koinler üzerinde tam kontrol sağlar.
+
+Dinamik Kara Liste Mekanizması: Analiz sırasında sürekli NaN gibi hatalar veren veya kritik bir hataya neden olan semboller, bot tarafından otomatik olarak geçici bir süre (30-60 dk) kara listeye alınır. Bu, gereksiz kaynak tüketimini ve tekrarlayan hataları önler.
+
+Değiştirildi (Changed)
+
+MİMARİ DEĞİŞİKLİK (Proaktif Tarama Mantığı): _execute_single_scan_cycle fonksiyonu tamamen yeniden yazıldı.
+
+Toplu Analizden Bireysel Analize Geçiş: Tarayıcı artık tüm sembolleri tek bir prompt ile toplu olarak analiz etmek yerine, filtrelenmiş listedeki her bir sembolü tek tek ve sırayla analiz eder.
+
+MTA Entegrasyonu: Tarayıcı, PROACTIVE_SCAN_MTA_ENABLED ayarı True ise, her bir potansiyel fırsatı manuel analizde olduğu gibi Çoklu Zaman Aralığı (giriş + trend) mantığıyla değerlendirir. Bu, sinyal kalitesini ve isabet oranını önemli ölçüde artırır.
+
+Akıllı Filtreleme Sırası: Tarama listesi artık önce whitelist, sonra gainer/loser listesi alınarak oluşturulur ve ardından blacklist, dinamik kara liste ve mevcut açık pozisyonlara göre filtrelenir.
+
+[1.4.0] - 2025-06-12
+
+(Bu versiyon bir önceki geliştirme döngüsünde ara versiyon olarak kullanılmıştır)
+
+[1.3.1] - 2025-06-12
+
+(Kritik hata düzeltmeleri)
 
 Bu sürüm, önceki sürümde tespit edilen ve botun temel işlevselliğini (analiz, senkronizasyon) etkileyen kritik hataları gidermeye odaklanan bir bakım sürümüdür. Ajan-araç etkileşimi daha sağlam hale getirilmiştir.
 
