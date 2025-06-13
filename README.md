@@ -35,7 +35,7 @@ Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü k
 
 1.  **Projeyi Klonlayın:**
     ```bash
-    git clone [https://github.com/kullanici-adiniz/gemini-trading-agent.git](https://github.com/kullanici-adiniz/gemini-trading-agent.git)
+    git clone [https://github.com/membaco/gemini-trading-agent.git](https://github.com/membaco/gemini-trading-agent.git)
     cd gemini-trading-agent
     ```
 
