@@ -6,6 +6,8 @@ import json
 import time
 import threading
 import logging
+import subprocess
+import sys
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from langchain.agents import AgentExecutor, create_react_agent
@@ -15,12 +17,12 @@ from tools import (
     get_market_price, get_technical_indicators, execute_trade_order,
     initialize_exchange, get_open_positions_from_exchange, get_atr_value,
     _get_unified_symbol, get_top_gainers_losers, _fetch_price_natively,
-    str_to_bool, get_wallet_balance, update_stop_loss_order
+    str_to_bool, get_wallet_balance, update_stop_loss_order,
+    cancel_all_open_orders
 )
 import config
-from config import APP_VERSION
 import database
-from notifications import send_telegram_message, format_open_position_message, format_close_position_message
+from notifications import send_telegram_message, format_open_position_message, format_close_position_message, format_partial_tp_message
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,8 +31,7 @@ os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
 os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
 os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "Gemini Trading Agent")
 
-# (Yeni) Dinamik kara liste için global değişken
-BLACKLISTED_SYMBOLS = {}  # Örnek: {'BTC/USDT': 1678886400.0}
+BLACKLISTED_SYMBOLS = {}
 
 try:
     llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0.1)
@@ -47,7 +48,6 @@ except Exception as e:
     exit()
 
 def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, entry_indicators: dict, trend_timeframe: str, trend_indicators: dict) -> str:
-    # ... (kod aynı)
     entry_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in entry_indicators.items()])
     trend_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in trend_indicators.items()])
     return f"""
@@ -85,7 +85,6 @@ def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, 
     """
 
 def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indicators: dict) -> str:
-    # ... (kod aynı)
     indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in indicators.items()])
     return f"""
     Sen, uzman bir trading analistisin.
@@ -112,7 +111,6 @@ def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indi
     """
 
 def create_reanalysis_prompt(position: dict) -> str:
-    # ... (kod aynı)
     symbol = position.get("symbol")
     timeframe = position.get("timeframe")
     side = position.get("side", "").upper()
@@ -135,13 +133,7 @@ def create_reanalysis_prompt(position: dict) -> str:
     Örnek: {{"recommendation": "KAPAT", "reason": "Fiyat giriş seviyesinin üzerine çıktı ve RSI aşırı alım sinyali veriyor, risk yönetimi gereği kapatılmalı."}}
     """
 
-# ... (Bu fonksiyon artık proaktif taramada kullanılmıyor, silinebilir veya bırakılabilir)
-def create_batch_analysis_prompt(market_data_batch: list) -> str:
-    # ...
-    pass
-
 def parse_agent_response(response: str) -> dict | None:
-    # ... (kod aynı)
     if not response or not isinstance(response, str):
         return None
     try:
@@ -149,14 +141,10 @@ def parse_agent_response(response: str) -> dict | None:
             response = response.split("```json")[1].split("```")[0]
         elif "```" in response:
             response = response.split("```")[1].split("```")[0]
-            
         return json.loads(response.strip())
     except (json.JSONDecodeError, IndexError):
         logging.error(f"JSON ayrıştırma hatası. Gelen Yanıt: {response}")
         return None
-
-# ... (diğer fonksiyonlar: check_and_manage_positions, background_position_checker, handle_trade_confirmation, sync_and_display_positions, vb. aynı kalır)
-# Not: Küçük değişiklikler için fonksiyonları tam olarak ekliyorum.
 
 def check_and_manage_positions():
     active_positions = database.get_all_positions()
@@ -181,6 +169,37 @@ def check_and_manage_positions():
                 handle_manual_close(position, from_auto=True, close_reason=close_reason)
                 continue
 
+            if config.USE_PARTIAL_TP and not position.get('partial_tp_executed'):
+                initial_sl = position.get('initial_stop_loss')
+                entry_price = position.get('entry_price')
+                
+                if initial_sl and entry_price:
+                    risk_distance = abs(entry_price - initial_sl)
+                    partial_tp_price = entry_price + (risk_distance * config.PARTIAL_TP_TARGET_RR) if side == 'buy' else entry_price - (risk_distance * config.PARTIAL_TP_TARGET_RR)
+                    
+                    if (side == 'buy' and current_price >= partial_tp_price) or (side == 'sell' and current_price <= partial_tp_price):
+                        logging.info(f"\n[PARTIAL-TP] {position['symbol']} için kısmi kâr alma hedefi {partial_tp_price:.4f} ulaşıldı.")
+                        
+                        initial_amount = position.get('initial_amount') or position.get('amount')
+                        amount_to_close = initial_amount * (config.PARTIAL_TP_CLOSE_PERCENT / 100)
+                        remaining_amount = position['amount'] - amount_to_close
+                        
+                        if remaining_amount > 0:
+                            close_side = 'sell' if side == 'buy' else 'buy'
+                            result_str = execute_trade_order.invoke({"symbol": position['symbol'], "side": close_side, "amount": amount_to_close})
+                            
+                            if "başarı" in result_str.lower() or "simülasyon" in result_str.lower():
+                                logging.info(f"Kısmi kâr alma başarılı: {amount_to_close:.4f} {position['symbol']} kapatıldı.")
+                                new_sl_price = entry_price
+                                sl_update_result = update_stop_loss_order.invoke({"symbol": position['symbol'], "side": side, "amount": remaining_amount, "new_stop_price": new_sl_price})
+                                logging.info(f"Kalan pozisyon için SL girişe çekildi: {sl_update_result}")
+                                database.update_position_after_partial_tp(position['symbol'], remaining_amount, new_sl_price)
+                                message = format_partial_tp_message(position['symbol'], amount_to_close, remaining_amount, entry_price)
+                                send_telegram_message(message)
+                                continue
+                            else:
+                                logging.error(f"Kısmi kâr alma sırasında pozisyon kapatılamadı: {result_str}")
+
             if config.USE_TRAILING_STOP_LOSS:
                 entry_price = position.get("entry_price", 0.0)
                 initial_sl = position.get('initial_stop_loss')
@@ -190,7 +209,6 @@ def check_and_manage_positions():
                 
                 if profit_perc > config.TRAILING_STOP_ACTIVATION_PERCENT:
                     original_sl_distance = abs(entry_price - initial_sl)
-                    
                     new_sl = 0.0
                     if side == 'buy' and (new_sl_candidate := current_price - original_sl_distance) > sl_price:
                         new_sl = new_sl_candidate
@@ -215,7 +233,6 @@ def background_position_checker():
         time.sleep(config.POSITION_CHECK_INTERVAL_SECONDS)
 
 def handle_trade_confirmation(recommendation, trade_symbol, current_price, timeframe, auto_confirm=False):
-    # ... (kod aynı)
     if not isinstance(current_price, (int, float)) or current_price <= 0:
         logging.error("Geçersiz fiyat bilgisi, işlem iptal edildi.")
         return
@@ -288,13 +305,12 @@ def handle_trade_confirmation(recommendation, trade_symbol, current_price, timef
         except Exception as e:
             logging.error(f"İşlem hazırlığı sırasında bir hata oluştu: {e}", exc_info=True)
 
-
 def sync_and_display_positions():
-    # ... (kod aynı)
+    """Borsa ile veritabanını senkronize eder ve pozisyonları listeler."""
     print("\n--- Pozisyonlar Görüntüleniyor... ---")
-    active_positions_db = database.get_all_positions()
-
+    
     if not config.LIVE_TRADING:
+        active_positions_db = database.get_all_positions()
         print("--- SİMÜLASYON MODU AKTİF ---")
         if not active_positions_db:
             print("Bot tarafından yönetilen simüle edilmiş pozisyon bulunmuyor.")
@@ -305,9 +321,7 @@ def sync_and_display_positions():
                 current_price = _fetch_price_natively(pos['symbol'])
                 if current_price is not None:
                     entry_price = pos.get('entry_price', 0); amount = pos.get('amount', 0); leverage = pos.get('leverage', 1); side = pos.get('side', 'buy')
-                    pnl = 0
-                    if side == 'buy': pnl = (current_price - entry_price) * amount
-                    else: pnl = (entry_price - current_price) * amount
+                    pnl = (current_price - entry_price) * amount if side == 'buy' else (entry_price - current_price) * amount
                     margin = (entry_price * amount) / leverage if leverage > 0 else 0
                     pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
                     pnl_status = "⬆️ KAR" if pnl >= 0 else "⬇️ ZARAR"
@@ -318,11 +332,12 @@ def sync_and_display_positions():
 
     print("--- CANLI MOD: Borsa ile Senkronize Ediliyor... ---")
     try:
+        active_positions_db = database.get_all_positions()
+        managed_positions_map = {p['symbol']: p for p in active_positions_db}
+
         exchange_positions_raw = get_open_positions_from_exchange.invoke({})
         if not isinstance(exchange_positions_raw, list):
             logging.error(f"Borsadan pozisyonlar alınamadı, dönen veri: {exchange_positions_raw}"); return
-        
-        managed_positions_map = {p['symbol']: p for p in active_positions_db}
         exchange_positions_map = {_get_unified_symbol(p.get('symbol')): p for p in exchange_positions_raw}
 
         for symbol, ex_pos in exchange_positions_map.items():
@@ -335,26 +350,17 @@ def sync_and_display_positions():
                     entry_price = float(ex_pos.get('entryPrice', 0.0) or 0.0)
                     sl_input = input(f"      >>> Stop-Loss fiyatını girin (boş bırakmak için enter): ")
                     tp_input = input(f"      >>> Take-Profit fiyatını girin (boş bırakmak için enter): ")
-                    new_pos = {
-                        "symbol": symbol, "side": 'buy' if ex_pos.get('side') == 'long' else 'sell', 
-                        "amount": float(ex_pos.get('contracts', 0.0)), "entry_price": entry_price, 
-                        "timeframe": timeframe, "leverage": leverage,
-                        "stop_loss": float(sl_input) if sl_input else 0.0,
-                        "take_profit": float(tp_input) if tp_input else 0.0,
-                    }
+                    new_pos = { "symbol": symbol, "side": 'buy' if ex_pos.get('side') == 'long' else 'sell', "amount": float(ex_pos.get('contracts', 0.0)), "entry_price": entry_price, "timeframe": timeframe, "leverage": leverage, "stop_loss": float(sl_input) if sl_input else 0.0, "take_profit": float(tp_input) if tp_input else 0.0 }
                     database.add_position(new_pos)
                     print(f"      +++ {symbol} pozisyonu bot yönetimine eklendi.")
 
         for symbol in list(managed_positions_map.keys()):
             if symbol not in exchange_positions_map:
                 logging.warning(f"Pozisyon '{symbol}' veritabanında var ama borsada yok. Veritabanından siliniyor.")
-                closed_pos = database.remove_position(symbol)
-                if closed_pos:
-                    closed_pos['close_price'] = closed_pos.get('entry_price') 
-                    pnl = 0 
-                    database.log_trade_to_history(closed_pos, closed_pos['close_price'], "MANUAL_SYNC_CLOSE")
-                    message = format_close_position_message(closed_pos, pnl, "MANUAL_SYNC_CLOSE")
-                    send_telegram_message(message)
+                database.remove_position(symbol)
+        
+        final_managed_positions = database.get_all_positions()
+        final_managed_symbols = {p['symbol'] for p in final_managed_positions}
 
         if not exchange_positions_map:
              print("Borsada açık pozisyon bulunmuyor.")
@@ -367,43 +373,34 @@ def sync_and_display_positions():
                 margin = float(pos_data.get('initialMargin', 0.0) or 0.0)
                 pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
                 pnl_status = "⬆️ KAR" if pnl >= 0 else "⬇️ ZARAR"
-                is_managed = "✅ Yönetiliyor" if symbol in managed_positions_map else "❌ Yönetilmiyor"
+                is_managed = "✅ Yönetiliyor" if symbol in final_managed_symbols else "❌ Yönetilmiyor"
                 print(f"  - {symbol} ({side.upper()}) | Büyüklük: {notional:.2f} USDT | PNL: {pnl:+.2f} USDT ({pnl_percentage:+.2f}%) [{pnl_status}] | {is_managed}")
 
         print("--- Senkronizasyon tamamlandı. ---")
     except Exception as e:
         logging.error(f"Senkronizasyon sırasında hata oluştu: {e}", exc_info=True)
 
-
-# ==============================================================================
-# ★★★ PROAKTİF TARAMA FONKSİYONU (TAMAMEN YENİLENDİ) ★★★
-# ==============================================================================
 def _execute_single_scan_cycle():
     logging.info("--- 🚀 Yeni Proaktif Tarama Döngüsü Başlatılıyor 🚀 ---")
     
-    # 1. Mevcut pozisyonları ve limitleri kontrol et
     active_positions = database.get_all_positions()
     if len(active_positions) >= config.MAX_CONCURRENT_TRADES:
         logging.warning(f"Maksimum pozisyon limitine ({config.MAX_CONCURRENT_TRADES}) ulaşıldı. Tarama atlanıyor.")
         return
     open_symbols = {p['symbol'] for p in active_positions}
 
-    # 2. Dinamik kara listeden süresi dolanları temizle
     now = time.time()
     for symbol, expiry in list(BLACKLISTED_SYMBOLS.items()):
         if now > expiry:
             del BLACKLISTED_SYMBOLS[symbol]
             logging.info(f"{symbol} dinamik kara listeden çıkarıldı.")
 
-    # 3. Taranacak sembol listesini oluştur
     symbols_to_scan = []
     
-    # 3a. Beyaz listeyi ekle
     whitelist_symbols = [_get_unified_symbol(s) for s in config.PROACTIVE_SCAN_WHITELIST]
     symbols_to_scan.extend(whitelist_symbols)
     logging.info(f"Beyaz listeden eklendi: {', '.join(whitelist_symbols) or 'Yok'}")
 
-    # 3b. Yükselen/Düşenler listesini ekle (eğer aktifse)
     if config.PROACTIVE_SCAN_USE_GAINERS_LOSERS:
         try:
             logging.info("En çok yükselen/düşenler listesi çekiliyor...")
@@ -414,10 +411,8 @@ def _execute_single_scan_cycle():
         except Exception as e:
             logging.error(f"Yükselen/Düşenler listesi alınamadı: {e}")
 
-    # 4. Sembol listesini filtrele ve tekilleştir
     final_scan_list = []
     seen = set()
-    # Statik kara listeyi hazırla
     static_blacklist = {_get_unified_symbol(s) for s in config.PROACTIVE_SCAN_BLACKLIST}
 
     for symbol in symbols_to_scan:
@@ -434,9 +429,7 @@ def _execute_single_scan_cycle():
 
     logging.info(f"Filtrelenmiş Nihai Tarama Listesi ({len(final_scan_list)} sembol): {', '.join(final_scan_list)}")
 
-    # 5. Her bir sembolü tek tek ve akıllıca analiz et
     for symbol in final_scan_list:
-        # Maksimum pozisyon limitini her döngüde tekrar kontrol et
         if len(database.get_all_positions()) >= config.MAX_CONCURRENT_TRADES:
             logging.warning("Tarama sırasında maksimum pozisyon limitine ulaşıldı. Döngü sonlandırılıyor.")
             break
@@ -445,7 +438,6 @@ def _execute_single_scan_cycle():
             print("-" * 50)
             logging.info(f"🔍 Analiz ediliyor: {symbol}")
             
-            # Gerekli verileri topla
             current_price = _fetch_price_natively(symbol)
             if not current_price:
                 logging.warning(f"{symbol} için fiyat alınamadı, atlanıyor.")
@@ -456,16 +448,14 @@ def _execute_single_scan_cycle():
             
             if entry_indicators_result.get("status") != "success":
                 logging.error(f"{symbol} ({entry_tf}) için teknik veri alınamadı: {entry_indicators_result.get('message')}")
-                # Hata 'NaN' içeriyorsa dinamik kara listeye ekle
                 if 'NaN' in entry_indicators_result.get('message', ''):
-                    BLACKLISTED_SYMBOLS[symbol] = time.time() + 3600  # 1 saat
+                    BLACKLISTED_SYMBOLS[symbol] = time.time() + 3600
                     logging.warning(f"{symbol} sürekli 'NaN' hatası veriyor, 1 saatliğine dinamik kara listeye alındı.")
                 continue
 
             entry_indicators_data = entry_indicators_result["data"]
             final_prompt = ""
 
-            # MTA analizi yap (eğer aktifse)
             if config.PROACTIVE_SCAN_MTA_ENABLED:
                 trend_tf = config.PROACTIVE_SCAN_TREND_TIMEFRAME
                 logging.info(f"{symbol} için MTA analizi yapılıyor (Trend: {trend_tf})")
@@ -475,11 +465,10 @@ def _execute_single_scan_cycle():
                     continue
                 trend_indicators_data = trend_indicators_result["data"]
                 final_prompt = create_mta_analysis_prompt(symbol, current_price, entry_tf, entry_indicators_data, trend_tf, trend_indicators_data)
-            else: # Standart analiz yap
+            else:
                 logging.info(f"{symbol} için standart analiz yapılıyor.")
                 final_prompt = create_final_analysis_prompt(symbol, entry_tf, current_price, entry_indicators_data)
 
-            # LLM'e analizi gönder
             logging.info(f"Yapay zeka analizi için {symbol} gönderiliyor...")
             result = llm.invoke(final_prompt)
             parsed_data = parse_agent_response(result.content)
@@ -490,7 +479,6 @@ def _execute_single_scan_cycle():
 
             print(json.dumps(parsed_data, indent=2, ensure_ascii=False))
 
-            # Sonucu değerlendir ve işlem onayı iste
             recommendation = parsed_data.get("recommendation")
             if recommendation in ["AL", "SAT"]:
                 handle_trade_confirmation(
@@ -505,13 +493,12 @@ def _execute_single_scan_cycle():
 
         except Exception as e:
             logging.critical(f"Tarama döngüsünde {symbol} işlenirken KRİTİK HATA: {e}", exc_info=True)
-            BLACKLISTED_SYMBOLS[symbol] = time.time() + 1800 # Kritik hatada 30 dk kara liste
+            BLACKLISTED_SYMBOLS[symbol] = time.time() + 1800
             logging.warning(f"{symbol} kritik hata nedeniyle 30 dakikalığına dinamik kara listeye alındı.")
         
-        time.sleep(5) # API limitlerini zorlamamak için her sembol arasında kısa bir mola
+        time.sleep(5)
 
     logging.info("--- ✅ Proaktif Tarama Döngüsü Tamamlandı ✅ ---")
-
 
 def run_proactive_scanner():
     logging.info("🚀 PROAKTİF TARAMA MODU BAŞLATILDI 🚀")
@@ -525,7 +512,6 @@ def run_proactive_scanner():
         print("Tek seferlik tarama tamamlandı. Ana menüye dönülüyor.")
 
 def handle_new_analysis():
-    # ... (kod aynı)
     active_positions = database.get_all_positions()
     if len(active_positions) >= config.MAX_CONCURRENT_TRADES:
         print("\n### UYARI: Maksimum pozisyon limitine ulaşıldı. ###"); return
@@ -583,9 +569,7 @@ def handle_new_analysis():
         print(f"\n--- KRİTİK HATA: Analiz sırasında bir sorun oluştu. ---")
         logging.error(f"handle_new_analysis hatası: {e}", exc_info=True)
 
-
 def handle_manage_position():
-    # ... (kod aynı)
     active_positions = database.get_all_positions()
     if not active_positions:
         print("Yönetilecek açık pozisyon bulunmuyor."); return
@@ -615,15 +599,19 @@ def handle_manage_position():
     except (ValueError, IndexError):
         print("Geçersiz giriş.")
 
-
+# --- (YENİ) EKSİK FONKSİYON EKLENDİ ---
 def handle_manual_close(position, from_auto=False, close_reason="MANUAL"):
-    # ... (kod aynı)
+    """Bir pozisyonu manuel veya otomatik olarak kapatır ve ilişkili emirleri temizler."""
     if not from_auto:
         print(f"UYARI: {position['symbol']} pozisyonunu manuel olarak kapatacaksınız.")
         onay = input("Emin misiniz? (evet/hayır): ").lower()
         if onay != 'evet':
             print("İşlem iptal edildi."); return
     
+    logging.info(f"Kapatılacak pozisyon ({position['symbol']}) için mevcut emirler iptal ediliyor...")
+    cancel_all_open_orders.invoke(position['symbol'])
+    time.sleep(1) 
+
     close_side = 'sell' if position['side'] == 'buy' else 'buy'
     result = execute_trade_order.invoke({
         "symbol": position['symbol'], "side": close_side, "amount": position['amount']
@@ -649,9 +637,7 @@ def handle_manual_close(position, from_auto=False, close_reason="MANUAL"):
     else:
         logging.error(f"Pozisyon kapatılamadı: {position['symbol']}. Sonuç: {result}")
 
-
 def handle_reanalyze_position(position):
-    # ... (kod aynı)
     print(f"\n--- {position['symbol']} Pozisyonu Yeniden Analiz Ediliyor... ---")
     reanalysis_prompt = create_reanalysis_prompt(position)
     
@@ -679,6 +665,19 @@ def handle_reanalyze_position(position):
         print(f"\n--- KRİTİK HATA: Yeniden analiz sırasında bir sorun oluştu. ---")
         logging.error(f"handle_reanalyze_position hatası: {e}", exc_info=True)
 
+def launch_dashboard():
+    """Web arayüzü sunucusunu ayrı bir işlem olarak başlatır."""
+    dashboard_script = os.path.join('dashboard', 'app.py')
+    if not os.path.exists(dashboard_script):
+        print("HATA: 'dashboard/app.py' dosyası bulunamadı. Lütfen proje yapısını kontrol edin.")
+        return
+
+    print("\n--- 📈 Web Arayüzü Başlatılıyor... ---")
+    try:
+        subprocess.Popen([sys.executable, dashboard_script])
+        print("✅ Sunucu başlatıldı. http://127.0.0.1:5001 adresini tarayıcıda açın.")
+    except Exception as e:
+        print(f"❌ Web arayüzü başlatılamadı: {e}")
 
 def main():
     database.init_db()
@@ -686,7 +685,7 @@ def main():
     
     print("\n" + "="*50)
     print(f"           GEMINI TRADING AGENT BAŞLATILDI")
-    print(f"                 Versiyon: {APP_VERSION}")
+    print(f"                 Versiyon: {config.APP_VERSION}")
     print("="*50)
     print(f"UYARI: CANLI İŞLEM MODU {'✅ AKTİF ✅' if config.LIVE_TRADING else '❌ KAPALI (Simülasyon Modu) ❌'}.")
     if config.LIVE_TRADING:
@@ -704,6 +703,7 @@ def main():
         print("3. Açık Pozisyonu Yönet")
         if config.PROACTIVE_SCAN_ENABLED:
             print("P. PROAKTİF TARAMAYI BAŞLAT (Fırsat Avcısı)")
+        print("D. WEB ARAYÜZÜNÜ BAŞLAT (Dashboard)")
         print("4. Çıkış")
         choice = input("Seçiminiz: ").lower().strip()
         
@@ -715,6 +715,8 @@ def main():
             handle_manage_position()
         elif choice == "p" and config.PROACTIVE_SCAN_ENABLED:
             run_proactive_scanner()
+        elif choice == "d":
+            launch_dashboard()
         elif choice == "4":
             print("Bot kapatılıyor...")
             break

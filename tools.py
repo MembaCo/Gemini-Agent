@@ -7,7 +7,6 @@ import time
 import pandas as pd
 import pandas_ta as ta
 import logging
-import re
 from dotenv import load_dotenv
 from langchain.tools import tool
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -40,7 +39,7 @@ def initialize_exchange(market_type: str = "spot"):
     config_data = {
         "apiKey": api_key, "secret": secret_key,
         "options": {"defaultType": market_type.lower()},
-        "enableRateLimit": True, # Oran limitlerini yönetmek için CCXT özelliğini etkinleştir
+        "enableRateLimit": True,
     }
     
     if use_testnet and market_type.lower() == 'future':
@@ -59,10 +58,15 @@ def initialize_exchange(market_type: str = "spot"):
         exit()
 
 def _get_unified_symbol(symbol_input: str) -> str:
-    """Her türlü formattaki sembol girdisini standart 'BASE/QUOTE' formatına dönüştürür."""
-    if not isinstance(symbol_input, str): return "INVALID/SYMBOL"
-    s = symbol_input.strip().upper().replace('/', '').split(':')[0]
-    return s[:-4] + '/USDT' if s.endswith('USDT') else s + '/USDT'
+    """
+    Her türlü formattaki sembol girdisini ('BTC', 'btcusdt', 'BTC/USDT')
+    standart 'BASE/QUOTE' (örn: 'BTC/USDT') formatına dönüştürür.
+    """
+    if not isinstance(symbol_input, str):
+        return "INVALID/SYMBOL"
+    
+    base = symbol_input.upper().split(':')[0].replace('/USDT', '').replace('USDT', '')
+    return f"{base}/USDT"
 
 def _parse_symbol_timeframe_input(input_str: str) -> tuple[str, str]:
     """Girdiden sembol ve zaman aralığını daha esnek ve hatasız bir şekilde ayrıştırır."""
@@ -85,13 +89,12 @@ def _fetch_price_natively(symbol: str) -> float | None:
         return float(ticker.get("last")) if ticker and ticker.get("last") is not None else None
     except Exception as e:
         logging.warning(f"{symbol} için fiyat çekilirken yeniden denenecek hata: {e}")
-        raise # tenacity'nin yeniden denemesi için hatayı tekrar yükselt
+        raise
 
 @tool
 @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 def get_wallet_balance(quote_currency: str = "USDT") -> dict:
     """Vadeli işlem cüzdanındaki belirtilen para biriminin (USDT) toplam bakiyesini alır."""
-    # ... (kod aynı, sadece dekoratör eklendi)
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future':
         return {"status": "error", "message": "Bu fonksiyon sadece vadeli işlem modunda çalışır."}
     try:
@@ -106,18 +109,17 @@ def get_wallet_balance(quote_currency: str = "USDT") -> dict:
 @tool
 def update_stop_loss_order(symbol: str, side: str, amount: float, new_stop_price: float) -> str:
     """Bir pozisyon için mevcut stop-loss emirlerini iptal eder ve yenisini oluşturur."""
-    # ... (kod aynı)
     if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
     if not config.LIVE_TRADING:
         return f"Simülasyon: {symbol} için SL emri {new_stop_price} olarak güncellendi."
     
     unified_symbol = _get_unified_symbol(symbol)
     try:
-        open_orders = exchange.fetch_open_orders(unified_symbol)
-        stop_orders = [o for o in open_orders if o.get('type') in ['stop_market', 'stop'] and o.get('reduceOnly')]
-        for order in stop_orders:
-            exchange.cancel_order(order['id'], unified_symbol)
-        
+        # Önce mevcut SL/TP emirlerini iptal et (DÜZELTİLDİ)
+        cancel_all_open_orders.invoke({"symbol": unified_symbol})
+        time.sleep(0.5) # İptalin işlenmesi için kısa bekleme
+
+        # Yeni SL emrini oluştur
         opposite_side = 'sell' if side == 'buy' else 'buy'
         formatted_amount = exchange.amount_to_precision(unified_symbol, amount)
         if new_stop_price > 0:
@@ -132,12 +134,10 @@ def update_stop_loss_order(symbol: str, side: str, amount: float, new_stop_price
 @tool
 def get_market_price(symbol: str) -> str:
     """Belirtilen kripto para biriminin anlık piyasa fiyatını alır."""
-    # ... (kod aynı)
     if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
     try:
-        unified_symbol = _get_unified_symbol(symbol)
-        price = _fetch_price_natively(unified_symbol)
-        return f"{unified_symbol} için anlık piyasa fiyatı: {price}" if price is not None else f"HATA: {unified_symbol} için fiyat bilgisi alınamadı."
+        price = _fetch_price_natively(_get_unified_symbol(symbol))
+        return f"{symbol} için anlık piyasa fiyatı: {price}" if price is not None else f"HATA: {symbol} için fiyat bilgisi alınamadı."
     except Exception as e:
         return f"HATA: Fiyat alınamadı. Sembol: '{symbol}'. Hata: {e}"
 
@@ -145,14 +145,13 @@ def get_market_price(symbol: str) -> str:
 @retry(wait=wait_exponential(multiplier=1, min=4, max=15), stop=stop_after_attempt(3))
 def get_technical_indicators(symbol_and_timeframe: str) -> dict:
     """Belirtilen sembol ve zaman aralığı için teknik göstergeleri hesaplar."""
-    # ... (kod aynı, sadece dekoratör eklendi)
     if not exchange: return {"status": "error", "message": "Borsa bağlantısı başlatılmamış."}
+    
+    symbol, timeframe = _parse_symbol_timeframe_input(symbol_and_timeframe)
     try:
-        symbol, timeframe = _parse_symbol_timeframe_input(symbol_and_timeframe)
-        
         bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=200)
         if not bars or len(bars) < 50:
-            raise ValueError(f"İndikatör hesaplaması için yetersiz veri ({len(bars)} mum).")
+            return {"status": "error", "message": f"İndikatör hesaplaması için yetersiz veri ({len(bars)} mum)."}
         
         df = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
         for col in ['open', 'high', 'low', 'close']:
@@ -174,16 +173,20 @@ def get_technical_indicators(symbol_and_timeframe: str) -> dict:
         }
         if any(value is None or pd.isna(value) for value in indicators.values()):
             return {"status": "error", "message": f"İndikatör hesaplanamadı (NaN). Sembol: {symbol}"}
+        
         return {"status": "success", "data": indicators}
+    
+    except ccxt.NetworkError as e:
+        logging.error(f"Ağ hatası ({symbol_and_timeframe}): {e}")
+        raise 
     except Exception as e:
-        logging.error(f"Teknik gösterge alınırken hata ({symbol_and_timeframe}): {e}")
-        raise
+        logging.error(f"Teknik gösterge alınırken beklenmedik hata ({symbol_and_timeframe}): {e}")
+        return {"status": "error", "message": f"Beklenmedik hata: {e}"}
 
 @tool
 @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 def get_atr_value(symbol_and_timeframe: str) -> dict:
     """Belirtilen sembol ve zaman aralığı için ATR değerini hesaplar."""
-    # ... (kod aynı, sadece dekoratör eklendi)
     if not exchange: return {"status": "error", "message": "Borsa bağlantısı başlatılmamış."}
     try:
         symbol, timeframe = _parse_symbol_timeframe_input(symbol_and_timeframe)
@@ -204,7 +207,6 @@ def get_atr_value(symbol_and_timeframe: str) -> dict:
 @retry(wait=wait_exponential(multiplier=1, min=5, max=20), stop=stop_after_attempt(3))
 def get_top_gainers_losers(top_n: int, min_volume_usdt: int) -> list:
     """24s değişime ve işlem hacmine göre en çok kazanan/kaybedenleri alır."""
-    # (Hacim filtresi eklendi ve dekoratör eklendi)
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future': return []
     try:
         all_tickers_data = exchange.fapiPublicGetTicker24hr()
@@ -216,7 +218,6 @@ def get_top_gainers_losers(top_n: int, min_volume_usdt: int) -> list:
             if not symbol or not symbol.endswith('USDT'): continue
             
             try:
-                # Hacim ve fiyat kontrolü
                 quote_volume = float(ticker.get('quoteVolume', 0))
                 price = float(ticker.get('lastPrice', 0))
                 price_change_percent = float(ticker.get('priceChangePercent', 0))
@@ -228,12 +229,11 @@ def get_top_gainers_losers(top_n: int, min_volume_usdt: int) -> list:
                         'price': price
                     })
             except (ValueError, TypeError):
-                continue # Geçersiz veri içeren ticker'ı atla
+                continue
         
         if not processed_tickers: return []
         processed_tickers.sort(key=lambda item: item['percentage'], reverse=True)
         
-        # En iyi ve en kötü N coini birleştir
         gainers = processed_tickers[:top_n]
         losers = processed_tickers[-top_n:]
         return gainers + losers
@@ -244,7 +244,6 @@ def get_top_gainers_losers(top_n: int, min_volume_usdt: int) -> list:
 @tool
 def execute_trade_order(symbol: str, side: str, amount: float, price: float = None, stop_loss: float = None, take_profit: float = None, leverage: float = None) -> str:
     """Alım/satım emri gönderir. SL/TP emirlerini hemen arkasından gönderir."""
-    # ... (kod aynı)
     if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
     unified_symbol = _get_unified_symbol(symbol)
     try:
@@ -286,7 +285,6 @@ def execute_trade_order(symbol: str, side: str, amount: float, price: float = No
 @retry(wait=wait_exponential(multiplier=1, min=5, max=20), stop=stop_after_attempt(3))
 def get_open_positions_from_exchange(tool_input: str = "") -> list:
     """Borsadaki mevcut açık vadeli işlem pozisyonlarını çeker."""
-    # ... (kod aynı, sadece dekoratör eklendi)
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future': return []
     try:
         all_positions = exchange.fetch_positions(params={'type': config.DEFAULT_MARKET_TYPE})
@@ -294,3 +292,19 @@ def get_open_positions_from_exchange(tool_input: str = "") -> list:
     except Exception as e:
         logging.error(f"Borsadan pozisyonlar alınırken hata oluştu: {e}")
         raise
+
+@tool
+def cancel_all_open_orders(symbol: str) -> str:
+    """Belirtilen bir sembol için tüm açık emirleri (SL/TP dahil) iptal eder."""
+    if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
+    if not config.LIVE_TRADING:
+        return f"Simülasyon: {symbol} için tüm açık emirler iptal edildi."
+
+    unified_symbol = _get_unified_symbol(symbol)
+    try:
+        exchange.cancel_all_orders(unified_symbol)
+        logging.info(f"İPTAL: {unified_symbol} için tüm açık emirler başarıyla iptal edildi.")
+        return f"Başarılı: {unified_symbol} için tüm açık emirler iptal edildi."
+    except Exception as e:
+        logging.error(f"HATA: {unified_symbol} için açık emirler iptal edilemedi. Detay: {e}")
+        return f"HATA: {unified_symbol} için emirler iptal edilemedi."

@@ -1,4 +1,6 @@
 # database.py
+# @author: Memba Co.
+
 import sqlite3
 import logging
 import config
@@ -12,10 +14,9 @@ def get_db_connection():
     return conn
 
 def init_db():
-    """Veritabanı tablolarını (eğer yoksa) oluşturur."""
+    """Veritabanı tablolarını (eğer yoksa) oluşturur ve şema güncellemelerini yapar."""
     conn = get_db_connection()
     try:
-        # initial_stop_loss sütunu Trailing Stop için ekleniyor
         conn.execute('''
             CREATE TABLE IF NOT EXISTS managed_positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,10 +28,21 @@ def init_db():
                 leverage REAL NOT NULL,
                 stop_loss REAL NOT NULL,
                 take_profit REAL NOT NULL,
-                initial_stop_loss REAL, 
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(managed_positions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'initial_stop_loss' not in columns:
+            cursor.execute('ALTER TABLE managed_positions ADD COLUMN initial_stop_loss REAL')
+        if 'initial_amount' not in columns:
+             cursor.execute('ALTER TABLE managed_positions ADD COLUMN initial_amount REAL')
+        if 'partial_tp_executed' not in columns:
+            cursor.execute('ALTER TABLE managed_positions ADD COLUMN partial_tp_executed BOOLEAN DEFAULT 0')
+        
         conn.execute('''
             CREATE TABLE IF NOT EXISTS trade_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,16 +68,31 @@ def add_position(pos: dict):
     """managed_positions tablosuna yeni bir pozisyon ekler."""
     conn = get_db_connection()
     try:
-        # initial_stop_loss pozisyon açılırken SL ile aynı değere ayarlanır
+        initial_amount = pos['amount']
         initial_sl = pos['stop_loss']
         conn.execute(
-            'INSERT INTO managed_positions (symbol, side, amount, entry_price, timeframe, leverage, stop_loss, take_profit, initial_stop_loss) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            (pos['symbol'], pos['side'], pos['amount'], pos['entry_price'], pos['timeframe'], pos['leverage'], pos['stop_loss'], pos['take_profit'], initial_sl)
+            'INSERT INTO managed_positions (symbol, side, amount, initial_amount, entry_price, timeframe, leverage, stop_loss, take_profit, initial_stop_loss) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (pos['symbol'], pos['side'], pos['amount'], initial_amount, pos['entry_price'], pos['timeframe'], pos['leverage'], pos['stop_loss'], pos['take_profit'], initial_sl)
         )
         conn.commit()
         logging.info(f"VERİTABANI: Yeni pozisyon eklendi -> {pos['symbol']}")
     except sqlite3.IntegrityError:
         logging.error(f"VERİTABANI HATA: {pos['symbol']} için zaten aktif bir pozisyon mevcut.")
+    finally:
+        conn.close()
+
+def update_position_after_partial_tp(symbol: str, new_amount: float, new_sl: float):
+    """Kısmi kâr alındıktan sonra pozisyonu günceller ve durumu işaretler."""
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE managed_positions SET amount = ?, stop_loss = ?, partial_tp_executed = 1 WHERE symbol = ?",
+            (new_amount, new_sl, symbol)
+        )
+        conn.commit()
+        logging.info(f"VERİTABANI: {symbol} için Kısmi TP sonrası pozisyon güncellendi.")
+    except Exception as e:
+        logging.error(f"Kısmi TP sonrası veritabanı güncellenirken hata: {e}")
     finally:
         conn.close()
 
@@ -110,7 +137,6 @@ def log_trade_to_history(closed_pos: dict, close_price: float, status: str):
     """Kapanan bir işlemi geçmiş tablosuna kaydeder."""
     conn = get_db_connection()
     try:
-        # PNL hesaplaması düzeltildi
         pnl = 0
         if closed_pos['side'].lower() == 'buy':
             pnl = (close_price - closed_pos['entry_price']) * closed_pos['amount']

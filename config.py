@@ -2,7 +2,7 @@
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.1" # Hata düzeltme sürümü
 
 # === YAPAY ZEKA MODEL AYARI ===
 GEMINI_MODEL = 'gemini-2.0-flash'
@@ -25,35 +25,44 @@ DEFAULT_MARKET_TYPE = 'future'
 LEVERAGE = 10.0
 
 # === RİSK YÖNETİMİ AYARLARI ===
-RISK_PER_TRADE_PERCENT = 2.0
-USE_ATR_FOR_SLTP = True
-ATR_MULTIPLIER_SL = 2.0
-RISK_REWARD_RATIO_TP = 1.5
+RISK_PER_TRADE_PERCENT = 5.0
+
+# --- Stop-Loss Ayarları (DÜZELTİLDİ) ---
+# Bu bölüm, dinamik stop-loss hesaplaması için gereklidir.
+USE_ATR_FOR_SLTP = True 
+ATR_MULTIPLIER_SL = 2.0 # ATR Değerinin Stop-Loss için kullanılacak katlayıcısı.
+
+# === KÂR ALMA STRATEJİLERİ ===
+# --- Ana Kâr Al (Take-Profit) Hedefi ---
+RISK_REWARD_RATIO_TP = 2.0 
+
+# --- İz Süren Zarar Durdur (Trailing Stop-Loss) ---
 USE_TRAILING_STOP_LOSS = True
 TRAILING_STOP_ACTIVATION_PERCENT = 1.5
 
+# --- Kısmi Kâr Alma (Partial Take-Profit) ---
+USE_PARTIAL_TP = True 
+PARTIAL_TP_TARGET_RR = 1.0 
+PARTIAL_TP_CLOSE_PERCENT = 50.0 
+
 # === POZİSYON YÖNETİMİ AYARLARI ===
-MAX_CONCURRENT_TRADES = 3
+MAX_CONCURRENT_TRADES = 5
 DATABASE_FILE = "trades.db"
-POSITION_CHECK_INTERVAL_SECONDS = 120
+POSITION_CHECK_INTERVAL_SECONDS = 60
 
 # === TELEGRAM BİLDİRİM AYARLARI ===
 TELEGRAM_ENABLED = True
 
-# === PROAKTİF TARAMA AYARLARI (GELİŞTİRİLDİ) ===
+# === PROAKTİF TARAMA AYARLARI ===
 PROACTIVE_SCAN_ENABLED = True
 PROACTIVE_SCAN_INTERVAL_SECONDS = 900
 PROACTIVE_SCAN_AUTO_CONFIRM = False
 PROACTIVE_SCAN_IN_LOOP = False
-
-# --- Filtreleme ve Liste Yönetimi ---
 PROACTIVE_SCAN_USE_GAINERS_LOSERS = True
-PROACTIVE_SCAN_TOP_N = 5
-PROACTIVE_SCAN_MIN_VOLUME_USDT = 1000000 # (Yeni) Sadece 24s hacmi bu değerin üzerindekileri tara
-PROACTIVE_SCAN_BLACKLIST = ["SHIB", "PEPE", "MEME"] # (Yeni) Bu koinleri asla tarama
-PROACTIVE_SCAN_WHITELIST = ["BTC", "ETH", "SOL"] # (Yeni) Yükselenler listesinde olmasa bile bunları her zaman tara
-
-# --- Analiz Zekası ---
-PROACTIVE_SCAN_MTA_ENABLED = True # (Yeni) Tarama yaparken MTA analizi kullan
-PROACTIVE_SCAN_ENTRY_TIMEFRAME = "15m" # (Yeni) Tarama için giriş sinyali zaman aralığı
-PROACTIVE_SCAN_TREND_TIMEFRAME = "4h" # (Yeni) Tarama için ana trend zaman aralığı
+PROACTIVE_SCAN_TOP_N = 10
+PROACTIVE_SCAN_MIN_VOLUME_USDT = 1000000
+PROACTIVE_SCAN_BLACKLIST = ["SHIB", "PEPE", "MEME"]
+PROACTIVE_SCAN_WHITELIST = ["BTC", "ETH", "SOL"]
+PROACTIVE_SCAN_MTA_ENABLED = True
+PROACTIVE_SCAN_ENTRY_TIMEFRAME = "15m"
+PROACTIVE_SCAN_TREND_TIMEFRAME = "4h"

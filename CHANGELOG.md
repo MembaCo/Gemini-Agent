@@ -9,32 +9,49 @@ Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
 Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına dayanmaktadır.
 
 Değişiklik Günlüğü (Changelog)
-
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir. Format, Keep a Changelog standardına dayanmaktadır.
 
-[1.5.0] - 2025-06-12
+[1.6.1] - 2025-06-13
+Düzeltildi (Fixed)
+KRİTİK HATA (AttributeError): config.py dosyasından yanlışlıkla silinen ATR_MULTIPLIER_SL parametresi geri eklendi. Bu hata, botun yeni bir pozisyon açmaya çalışırken Stop-Loss mesafesini hesaplayamamasına ve programın çökmesine neden oluyordu.
 
-Bu sürüm, proaktif tarama (Fırsat Avcısı) modülünü temelden yenileyerek çok daha stabil, akıllı ve yapılandırılabilir hale getirmeye odaklanmıştır. Artık tarayıcı, hatalara karşı daha dirençli, piyasa gürültüsünü daha iyi filtreliyor ve Çoklu Zaman Aralığı (MTA) analizi ile daha kaliteli sinyaller üretiyor.
+
+[1.6.0] - 2025-06-13
+Bu sürüm, botun kâr alma stratejilerine profesyonel bir yaklaşım getirerek, "Kısmi Kâr Alma" (Partial Take-Profit) özelliğini eklemiştir. Ayrıca, web arayüzündeki ve senkronizasyon mantığındaki önemli hatalar giderilmiştir.
 
 Eklendi (Added)
+Kısmi Kâr Alma Stratejisi: Bot artık config.py üzerinden etkinleştirilebilen yeni bir kâr alma mekanizmasına sahip.
 
-API Hatalarına Karşı Direnç: tenacity kütüphanesi entegre edildi. tools.py içindeki tüm borsa API çağrıları (teknik gösterge, fiyat, bakiye alma vb.), geçici ağ veya API limit hatalarında programın çökmesini önlemek için artık otomatik olarak birkaç kez yeniden deneme yapmaktadır.
+İlk Kâr Hedefi (1R): Fiyat, ilk risk mesafesi (1R) kadar kâr ettiğinde, bot pozisyonun belirlenen bir yüzdesini (PARTIAL_TP_CLOSE_PERCENT) otomatik olarak kapatır.
 
-Hacim ve Likidite Filtresi: Proaktif tarayıcıya, düşük hacimli ve riskli koinleri elemek için PROACTIVE_SCAN_MIN_VOLUME_USDT ayarı eklendi. Tarayıcı artık sadece belirlenen 24 saatlik işlem hacminin üzerindeki koinleri dikkate alır.
+Riski Sıfırlama (Breakeven): İlk kâr alındıktan sonra, kalan pozisyonun Stop-Loss seviyesi otomatik olarak giriş fiyatına çekilir.
 
-Gelişmiş Sembol Liste Yönetimi: config.py dosyasına PROACTIVE_SCAN_WHITELIST (her zaman tara) ve PROACTIVE_SCAN_BLACKLIST (asla tarama) seçenekleri eklendi. Bu, taranacak koinler üzerinde tam kontrol sağlar.
+Özel Telegram Bildirimi: Kısmi kâr alma işlemi başarıyla tamamlandığında yeni bir Telegram bildirimi gönderilir.
 
-Dinamik Kara Liste Mekanizması: Analiz sırasında sürekli NaN gibi hatalar veren veya kritik bir hataya neden olan semboller, bot tarafından otomatik olarak geçici bir süre (30-60 dk) kara listeye alınır. Bu, gereksiz kaynak tüketimini ve tekrarlayan hataları önler.
+Web Arayüzü (Dashboard): Botun performansını, aktif pozisyonlarını ve işlem geçmişini canlı olarak görselleştiren bir web panosu eklendi. Flask ile oluşturulmuştur ve D menü seçeneği ile başlatılabilir.
 
 Değiştirildi (Changed)
+Senkronizasyon Mantığı: sync_and_display_positions fonksiyonu, bot tarafından yönetilmeyen ve manuel olarak kapatılan pozisyonları artık işlem geçmişine kaydetmeyecek şekilde güncellendi. Bu, web arayüzündeki PNL istatistiklerinin doğruluğunu artırır.
 
-MİMARİ DEĞİŞİKLİK (Proaktif Tarama Mantığı): _execute_single_scan_cycle fonksiyonu tamamen yeniden yazıldı.
+Sembol Standardizasyonu: _get_unified_symbol fonksiyonu, HMSTRUSDT/USDT gibi hatalı formatları önlemek için daha sağlam bir mantıkla tamamen yeniden yazıldı.
 
-Toplu Analizden Bireysel Analize Geçiş: Tarayıcı artık tüm sembolleri tek bir prompt ile toplu olarak analiz etmek yerine, filtrelenmiş listedeki her bir sembolü tek tek ve sırayla analiz eder.
+Düzeltildi (Fixed)
+Web Arayüzü Grafik Hatası: index.html dosyasındaki P&L zaman çizelgesinin sürekli aşağı kaymasına neden olan boyutlandırma hatası, grafiğin sabit yükseklikte bir konteynere alınması ve chart.js ayarlarının iyileştirilmesiyle giderildi.
 
-MTA Entegrasyonu: Tarayıcı, PROACTIVE_SCAN_MTA_ENABLED ayarı True ise, her bir potansiyel fırsatı manuel analizde olduğu gibi Çoklu Zaman Aralığı (giriş + trend) mantığıyla değerlendirir. Bu, sinyal kalitesini ve isabet oranını önemli ölçüde artırır.
+[1.5.0] - 2025-06-12
+Bu sürüm, proaktif tarama (Fırsat Avcısı) modülünü temelden yenileyerek çok daha stabil, akıllı ve yapılandırılabilir hale getirmeye odaklanmıştır.
 
-Akıllı Filtreleme Sırası: Tarama listesi artık önce whitelist, sonra gainer/loser listesi alınarak oluşturulur ve ardından blacklist, dinamik kara liste ve mevcut açık pozisyonlara göre filtrelenir.
+Eklendi (Added)
+API Hatalarına Karşı Direnç: tenacity kütüphanesi entegre edildi.
+
+Hacim ve Likidite Filtresi: Proaktif tarayıcıya PROACTIVE_SCAN_MIN_VOLUME_USDT ayarı eklendi.
+
+Gelişmiş Sembol Liste Yönetimi: PROACTIVE_SCAN_WHITELIST ve PROACTIVE_SCAN_BLACKLIST seçenekleri eklendi.
+
+Dinamik Kara Liste Mekanizması: Sürekli hata veren semboller geçici olarak kara listeye alınır.
+
+Değiştirildi (Changed)
+MİMARİ DEĞİŞİKLİK (Proaktif Tarama Mantığı): _execute_single_scan_cycle fonksiyonu tamamen yeniden yazıldı. Toplu analizden bireysel ve MTA tabanlı analize geçildi.
 
 [1.4.0] - 2025-06-12
 

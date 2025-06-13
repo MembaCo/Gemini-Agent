@@ -7,3 +7,5 @@ pandas-ta
 google-generativeai
 tenacity
 requests
+Flask
+Flask-Cors
