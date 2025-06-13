@@ -108,16 +108,28 @@ def get_wallet_balance(quote_currency: str = "USDT") -> dict:
 
 @tool
 def update_stop_loss_order(symbol: str, side: str, amount: float, new_stop_price: float) -> str:
-    """Bir pozisyon için mevcut stop-loss emirlerini iptal eder ve yenisini oluşturur."""
+    """(DÜZELTİLDİ) Bir pozisyon için mevcut stop-loss emirlerini iptal eder ve yenisini oluşturur. Take-Profit emirlerine dokunmaz."""
     if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
     if not config.LIVE_TRADING:
         return f"Simülasyon: {symbol} için SL emri {new_stop_price} olarak güncellendi."
     
     unified_symbol = _get_unified_symbol(symbol)
     try:
-        # Önce mevcut SL/TP emirlerini iptal et (DÜZELTİLDİ)
-        cancel_all_open_orders.invoke({"symbol": unified_symbol})
-        time.sleep(0.5) # İptalin işlenmesi için kısa bekleme
+        # Sadece mevcut STOP emirlerini iptal et.
+        open_orders = exchange.fetch_open_orders(unified_symbol)
+        
+        # 'stop' içeren ve pozisyon azaltıcı ('reduceOnly') olan emirleri bul
+        stop_orders_to_cancel = [
+            order for order in open_orders 
+            if 'stop' in order.get('type', '').lower() and order.get('reduceOnly')
+        ]
+        
+        logging.info(f"{unified_symbol} için iptal edilecek {len(stop_orders_to_cancel)} adet stop emri bulundu.")
+        for order in stop_orders_to_cancel:
+            exchange.cancel_order(order['id'], unified_symbol)
+            logging.info(f"Stop emri {order['id']} ({order['type']}) iptal edildi.")
+        
+        time.sleep(0.5) # İptallerin işlenmesi için kısa bekleme
 
         # Yeni SL emrini oluştur
         opposite_side = 'sell' if side == 'buy' else 'buy'
@@ -125,11 +137,13 @@ def update_stop_loss_order(symbol: str, side: str, amount: float, new_stop_price
         if new_stop_price > 0:
             params_sl = {'stopPrice': new_stop_price, 'reduceOnly': True}
             exchange.create_order(unified_symbol, 'STOP_MARKET', opposite_side, formatted_amount, None, params_sl)
-            return f"Başarılı: {unified_symbol} için SL emri {new_stop_price} olarak güncellendi."
+            return f"Başarılı: {unified_symbol} için yeni SL emri {new_stop_price} olarak oluşturuldu."
         else:
             return "Hata: Geçersiz yeni stop-loss fiyatı."
     except Exception as e:
+        logging.error(f"HATA: SL güncellenemedi. Detay: {e}", exc_info=True)
         return f"HATA: SL güncellenemedi. Detay: {e}"
+
 
 @tool
 def get_market_price(symbol: str) -> str:
