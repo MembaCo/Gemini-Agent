@@ -115,10 +115,7 @@ def update_stop_loss_order(symbol: str, side: str, amount: float, new_stop_price
     
     unified_symbol = _get_unified_symbol(symbol)
     try:
-        # Sadece mevcut STOP emirlerini iptal et.
         open_orders = exchange.fetch_open_orders(unified_symbol)
-        
-        # 'stop' içeren ve pozisyon azaltıcı ('reduceOnly') olan emirleri bul
         stop_orders_to_cancel = [
             order for order in open_orders 
             if 'stop' in order.get('type', '').lower() and order.get('reduceOnly')
@@ -129,9 +126,8 @@ def update_stop_loss_order(symbol: str, side: str, amount: float, new_stop_price
             exchange.cancel_order(order['id'], unified_symbol)
             logging.info(f"Stop emri {order['id']} ({order['type']}) iptal edildi.")
         
-        time.sleep(0.5) # İptallerin işlenmesi için kısa bekleme
+        time.sleep(0.5)
 
-        # Yeni SL emrini oluştur
         opposite_side = 'sell' if side == 'buy' else 'buy'
         formatted_amount = exchange.amount_to_precision(unified_symbol, amount)
         if new_stop_price > 0:

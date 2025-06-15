@@ -6,3 +6,9 @@
 /__pycache__
 *.db
 *.db-journal
+/build
+/.vscode
+/.idea
+/.DS_Store
+build.spec
+/dashboard/__pycache__
