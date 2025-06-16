@@ -4,6 +4,7 @@
 import sqlite3
 import logging
 from contextlib import contextmanager
+from tools import calculate_pnl
 import config
 
 DB_FILE = config.DATABASE_FILE
@@ -175,11 +176,10 @@ def log_trade_to_history(closed_pos: dict, close_price: float, status: str):
             # Anahtar varlığını kontrol et
             entry_price = closed_pos.get('entry_price', 0)
             amount = closed_pos.get('amount', 0)
+            side = closed_pos.get('side', '')
             
-            if closed_pos.get('side', '').lower() == 'buy':
-                pnl = (close_price - entry_price) * amount
-            elif closed_pos.get('side', '').lower() == 'sell':
-                pnl = (entry_price - close_price) * amount
+            # Tekrarlanan mantık yerine merkezi fonksiyonu çağır
+            pnl = calculate_pnl(side, entry_price, close_price, amount)
             
             conn.execute(sql, (
                 closed_pos.get('symbol'), closed_pos.get('side'), amount, 

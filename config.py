@@ -1,15 +1,18 @@
-# config.py
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.6.1" # Hata düzeltme sürümü
+APP_VERSION = "1.7.0" # Haber analizi özelliği eklendi
 
 # === YAPAY ZEKA MODEL AYARI ===
-GEMINI_MODEL = 'gemini-2.0-flash'
+GEMINI_MODEL = 'gemini-1.5-flash' # veya kullandığınız diğer model
 
-# === ÇOKLU ZAMAN ARALIĞI (MTA) ANALİZİ AYARLARI (MANUEL) ===
+# === STRATEJİ AYARLARI ===
 USE_MTA_ANALYSIS = True
 MTA_TREND_TIMEFRAME = "4h"
+
+# YENİ: HABER ANALİZİ AYARI
+# Botun işlem kararı verirken CryptoPanic API'si üzerinden haberleri kontrol edip etmeyeceğini belirler.
+USE_NEWS_ANALYSIS = True
 
 # === CANLI İŞLEM AYARI (DİKKAT!) ===
 LIVE_TRADING = True
@@ -27,10 +30,9 @@ LEVERAGE = 10.0
 # === RİSK YÖNETİMİ AYARLARI ===
 RISK_PER_TRADE_PERCENT = 5.0
 
-# --- Stop-Loss Ayarları (DÜZELTİLDİ) ---
-# Bu bölüm, dinamik stop-loss hesaplaması için gereklidir.
+# --- Stop-Loss Ayarları ---
 USE_ATR_FOR_SLTP = True 
-ATR_MULTIPLIER_SL = 2.0 # ATR Değerinin Stop-Loss için kullanılacak katlayıcısı.
+ATR_MULTIPLIER_SL = 2.0 
 
 # === KÂR ALMA STRATEJİLERİ ===
 # --- Ana Kâr Al (Take-Profit) Hedefi ---

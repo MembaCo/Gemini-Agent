@@ -1,4 +1,4 @@
-# tools.py
+# tools.py (YENİ ARAÇ EKLENMİŞ TAM SÜRÜM)
 # @author: Memba Co.
 
 import os
@@ -7,6 +7,8 @@ import time
 import pandas as pd
 import pandas_ta as ta
 import logging
+import requests # YENİ: Haber API'si için eklendi
+from datetime import datetime
 from dotenv import load_dotenv
 from langchain.tools import tool
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -74,11 +76,25 @@ def _parse_symbol_timeframe_input(input_str: str) -> tuple[str, str]:
     valid_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
     for tf in sorted(valid_timeframes, key=len, reverse=True):
         if s.lower().endswith(tf):
-            separator_length = 1 if len(s) > len(tf) and s[-len(tf)-1] in [' ', ',', '-', '_'] else 0
+            # GÜNCELLENDİ: Ajanın @ ile gönderdiği girdiyi de kabul etmesi için eklendi.
+            separator_length = 1 if len(s) > len(tf) and s[-len(tf)-1] in [' ', ',', '-', '_', '@'] else 0
             symbol_part = s[:-len(tf)-separator_length]
             timeframe = tf.upper() if tf == '1M' else tf.lower()
             return _get_unified_symbol(symbol_part), timeframe
     return _get_unified_symbol(s), '1h'
+
+def calculate_pnl(side: str, entry_price: float, close_price: float, amount: float) -> float:
+    """
+    Verilen parametrelere göre PNL (Kâr/Zarar) hesaplar.
+    """
+    if not all([side, entry_price, close_price, amount]):
+        return 0.0
+        
+    if side.lower() == 'buy':
+        return (close_price - entry_price) * amount
+    elif side.lower() == 'sell':
+        return (entry_price - close_price) * amount
+    return 0.0
 
 @retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
 def _fetch_price_natively(symbol: str) -> float | None:
@@ -213,6 +229,94 @@ def get_atr_value(symbol_and_timeframe: str) -> dict:
     except Exception as e:
         logging.error(f"ATR alınırken hata: {e}")
         raise
+
+@tool
+@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
+def get_funding_rate(symbol: str) -> str:
+    """
+    Belirtilen vadeli işlem sembolü için anlık fonlama oranını ve bir sonraki fonlama zamanını alır.
+    Pozitif fonlama oranı long pozisyonların short pozisyonları, negatif oran ise short'ların long'ları fonladığını gösterir.
+    Aşırı yüksek veya düşük oranlar piyasadaki aşırı bir duyarlılığa işaret edebilir.
+    """
+    if not exchange or config.DEFAULT_MARKET_TYPE != 'future':
+        return "Fonlama oranı sadece vadeli işlemlerde mevcuttur."
+    
+    unified_symbol = _get_unified_symbol(symbol)
+    try:
+        rate_data = exchange.fetch_funding_rate(unified_symbol)
+        funding_rate = rate_data.get('fundingRate', 0) * 100  # Yüzde olarak göstermek için
+        next_funding_time_ts = rate_data.get('nextFundingTime', 0)
+        next_funding_time_str = datetime.fromtimestamp(next_funding_time_ts / 1000).strftime('%Y-%m-%d %H:%M:%S') if next_funding_time_ts else "N/A"
+        
+        return f"Fonlama Oranı: {funding_rate:.4f}%, Bir Sonraki Fonlama: {next_funding_time_str}"
+    except Exception as e:
+        return f"HATA: {unified_symbol} için fonlama oranı alınamadı: {e}"
+
+@tool
+@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
+def get_order_book_depth(symbol: str) -> str:
+    """
+    Belirtilen sembol için emir defterinin ilk 20 kademesindeki toplam alım (bid) ve satım (ask) hacmini USDT cinsinden hesaplar.
+    Bu, anlık alım veya satım baskısını ölçmek için kullanılır.
+    Alış/Satış Oranı > 1 ise alım baskısının, < 1 ise satım baskısının daha güçlü olduğunu gösterebilir.
+    """
+    if not exchange: return "HATA: Borsa bağlantısı başlatılmamış."
+    unified_symbol = _get_unified_symbol(symbol)
+    try:
+        order_book = exchange.fetch_order_book(unified_symbol, limit=20)
+        
+        total_bid_volume_usdt = sum(price * size for price, size in order_book['bids'])
+        total_ask_volume_usdt = sum(price * size for price, size in order_book['asks'])
+        
+        bid_ask_ratio = total_bid_volume_usdt / total_ask_volume_usdt if total_ask_volume_usdt > 0 else float('inf')
+        
+        return (f"Emir Defteri Derinliği: Toplam Alış (Bid) Hacmi: {total_bid_volume_usdt:,.2f} USDT, "
+                f"Toplam Satış (Ask) Hacmi: {total_ask_volume_usdt:,.2f} USDT, "
+                f"Alış/Satış Oranı: {bid_ask_ratio:.2f}")
+    except Exception as e:
+        return f"HATA: {unified_symbol} için emir defteri alınamadı: {e}"
+
+# YENİ: Haber Analizi Aracı
+@tool
+@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
+def get_latest_news(symbol: str) -> str:
+    """
+    Belirtilen bir kripto para sembolü (örn: BTC, ETH) için CryptoPanic API'sinden en son haber başlıklarını çeker.
+    Bu araç, bir işlem kararı almadan önce piyasadaki olumlu veya olumsuz temel gelişmeleri (FUD veya iyi haberler) kontrol etmek için kullanılır.
+    """
+    api_key = os.getenv("CRYPTOPANIC_API_KEY")
+    if not api_key:
+        return "Haber analizi için CryptoPanic API anahtarı .env dosyasında bulunamadı."
+    
+    # Sembolü BTC/USDT'den sadece BTC'ye çeviriyoruz
+    base_currency = symbol.split('/')[0]
+    
+    url = f"https://cryptopanic.com/api/v1/posts/?auth_token={api_key}&currencies={base_currency}&public=true"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # HTTP hataları için kontrol
+        data = response.json()
+        
+        if not data.get('results'):
+            return f"{base_currency} için güncel bir haber bulunamadı."
+        
+        # En son 3 haberi alıp formatlayalım
+        headlines = []
+        for news_item in data['results'][:3]:
+            title = news_item.get('title')
+            # API'den gelen duyarlılık verisini de ekleyelim (varsa)
+            votes = news_item.get('votes', {})
+            sentiment_str = f" (👍{votes.get('liked', 0)} / 👎{votes.get('disliked', 0)} / 😆{votes.get('lol', 0)})"
+            headlines.append(f"- {title}{sentiment_str}")
+        
+        return "En son haberler:\n" + "\n".join(headlines)
+        
+    except requests.RequestException as e:
+        return f"HATA: Haberler alınırken ağ hatası oluştu: {e}"
+    except Exception as e:
+        return f"HATA: Haberler işlenirken beklenmedik bir hata oluştu: {e}"
+
 
 @retry(wait=wait_exponential(multiplier=1, min=5, max=20), stop=stop_after_attempt(3))
 def get_top_gainers_losers(top_n: int, min_volume_usdt: int) -> list:

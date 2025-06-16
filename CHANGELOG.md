@@ -3,42 +3,48 @@
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
 Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına dayanmaktadır.
 
-# Değişiklik Günlüğü (Changelog)
+## [1.7.0] - 2025-06-16
 
-Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
-Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına dayanmaktadır.
+Bu sürüm, bota temel analiz yeteneği kazandırarak karar mekanizmasını çok daha sofistike hale getirmeye odaklanmıştır. Artık bot, sadece teknik göstergelere değil, piyasayı etkileyebilecek en güncel haberlere de bakarak işlem yapmaktadır. Ayrıca, önceki sürümlerde tespit edilen kritik hatalar giderilmiştir.
 
-Değişiklik Günlüğü (Changelog)
-Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir. Format, Keep a Changelog standardına dayanmaktadır.
+### Eklendi (Added)
+- **Haber Analizi (Temel Analiz) Entegrasyonu:** Bot artık bir işlem kararı vermeden önce, ilgili kripto para hakkındaki en son haberleri analiz etme yeteneğine sahiptir.
+  - **CryptoPanic API Entegrasyonu:** `tools.py` içine, CryptoPanic API'sini kullanarak haber başlıklarını ve duyarlılık oylarını çeken yeni bir `get_latest_news` aracı eklendi.
+  - **Güvenlik Odaklı Karar Verme:** Yapay zeka prompt'ları, analize başlamadan önce haberleri kontrol edecek şekilde güncellendi. Eğer piyasayı olumsuz etkileyebilecek (FUD, hack, regülasyon vb.) bir haber varsa, bot diğer tüm sinyaller olumlu olsa bile işlemi açmayarak "BEKLE" kararı verir.
 
-[1.6.1] - 2025-06-13
-Düzeltildi (Fixed)
-KRİTİK HATA (AttributeError): config.py dosyasından yanlışlıkla silinen ATR_MULTIPLIER_SL parametresi geri eklendi. Bu hata, botun yeni bir pozisyon açmaya çalışırken Stop-Loss mesafesini hesaplayamamasına ve programın çökmesine neden oluyordu.
+### Değiştirildi (Changed)
+- **Yapay Zeka Prompt'ları:** `main.py` içerisindeki `create_mta_analysis_prompt`, `create_final_analysis_prompt` ve `create_reanalysis_prompt` fonksiyonları, yeni haber verilerini işleyecek ve analiz sürecine dahil edecek şekilde tamamen yeniden yapılandırıldı.
+- **Ajan Yetenekleri:** LangChain ajanının araç seti (`agent_tools`), yeni `get_latest_news` aracını içerecek şekilde genişletildi. Ajanın maksimum iterasyon sayısı, daha karmaşık analizler için artırıldı.
+
+### Düzeltildi (Fixed)
+- **Veritabanı Kayıt Hatası (`TypeError`):** Pozisyon kapatıldıktan sonra işlem geçmişine kayıt yapılırken, `calculate_pnl` yardımcı fonksiyonunun yanlışlıkla `@tool` olarak etiketlenmesinden kaynaklanan `TypeError` hatası, ilgili dekoratör kaldırılarak giderildi.
+- **Ajan Girdi Ayrıştırma Hatası:** Ajanın `get_technical_indicators` aracına `SEMBOL@ZAMAN_DİLİMİ` formatında girdi göndermesi durumunda oluşan sembol ayrıştırma hatası düzeltildi. `_parse_symbol_timeframe_input` fonksiyonu artık `@` karakterini de geçerli bir ayırıcı olarak tanımaktadır.
 
 
-[1.6.0] - 2025-06-13
+## [1.6.1] - 2025-06-13
+### Düzeltildi (Fixed)
+- **KRİTİK HATA (AttributeError):** `config.py` dosyasından yanlışlıkla silinen `ATR_MULTIPLIER_SL` parametresi geri eklendi. Bu hata, botun yeni bir pozisyon açmaya çalışırken Stop-Loss mesafesini hesaplayamamasına ve programın çökmesine neden oluyordu.
+
+
+## [1.6.0] - 2025-06-13
 Bu sürüm, botun kâr alma stratejilerine profesyonel bir yaklaşım getirerek, "Kısmi Kâr Alma" (Partial Take-Profit) özelliğini eklemiştir. Ayrıca, web arayüzündeki ve senkronizasyon mantığındaki önemli hatalar giderilmiştir.
 
-Eklendi (Added)
-Kısmi Kâr Alma Stratejisi: Bot artık config.py üzerinden etkinleştirilebilen yeni bir kâr alma mekanizmasına sahip.
+### Eklendi (Added)
+- **Kısmi Kâr Alma Stratejisi:** Bot artık `config.py` üzerinden etkinleştirilebilen yeni bir kâr alma mekanizmasına sahip.
+  - **İlk Kâr Hedefi (1R):** Fiyat, ilk risk mesafesi (1R) kadar kâr ettiğinde, bot pozisyonun belirlenen bir yüzdesini (`PARTIAL_TP_CLOSE_PERCENT`) otomatik olarak kapatır.
+  - **Riski Sıfırlama (Breakeven):** İlk kâr alındıktan sonra, kalan pozisyonun Stop-Loss seviyesi otomatik olarak giriş fiyatına çekilir.
+  - **Özel Telegram Bildirimi:** Kısmi kâr alma işlemi başarıyla tamamlandığında yeni bir Telegram bildirimi gönderilir.
+- **Web Arayüzü (Dashboard):** Botun performansını, aktif pozisyonlarını ve işlem geçmişini canlı olarak görselleştiren bir web panosu eklendi. Flask ile oluşturulmuştur ve `D` menü seçeneği ile başlatılabilir.
 
-İlk Kâr Hedefi (1R): Fiyat, ilk risk mesafesi (1R) kadar kâr ettiğinde, bot pozisyonun belirlenen bir yüzdesini (PARTIAL_TP_CLOSE_PERCENT) otomatik olarak kapatır.
+### Değiştirildi (Changed)
+- **Senkronizasyon Mantığı:** `sync_and_display_positions` fonksiyonu, bot tarafından yönetilmeyen ve manuel olarak kapatılan pozisyonları artık işlem geçmişine kaydetmeyecek şekilde güncellendi. Bu, web arayüzündeki PNL istatistiklerinin doğruluğunu artırır.
+- **Sembol Standardizasyonu:** `_get_unified_symbol` fonksiyonu, `HMSTRUSDT/USDT` gibi hatalı formatları önlemek için daha sağlam bir mantıkla tamamen yeniden yazıldı.
 
-Riski Sıfırlama (Breakeven): İlk kâr alındıktan sonra, kalan pozisyonun Stop-Loss seviyesi otomatik olarak giriş fiyatına çekilir.
+### Düzeltildi (Fixed)
+- **Web Arayüzü Grafik Hatası:** `index.html` dosyasındaki P&L zaman çizelgesinin sürekli aşağı kaymasına neden olan boyutlandırma hatası, grafiğin sabit yükseklikte bir konteynere alınması ve chart.js ayarlarının iyileştirilmesiyle giderildi.
 
-Özel Telegram Bildirimi: Kısmi kâr alma işlemi başarıyla tamamlandığında yeni bir Telegram bildirimi gönderilir.
 
-Web Arayüzü (Dashboard): Botun performansını, aktif pozisyonlarını ve işlem geçmişini canlı olarak görselleştiren bir web panosu eklendi. Flask ile oluşturulmuştur ve D menü seçeneği ile başlatılabilir.
-
-Değiştirildi (Changed)
-Senkronizasyon Mantığı: sync_and_display_positions fonksiyonu, bot tarafından yönetilmeyen ve manuel olarak kapatılan pozisyonları artık işlem geçmişine kaydetmeyecek şekilde güncellendi. Bu, web arayüzündeki PNL istatistiklerinin doğruluğunu artırır.
-
-Sembol Standardizasyonu: _get_unified_symbol fonksiyonu, HMSTRUSDT/USDT gibi hatalı formatları önlemek için daha sağlam bir mantıkla tamamen yeniden yazıldı.
-
-Düzeltildi (Fixed)
-Web Arayüzü Grafik Hatası: index.html dosyasındaki P&L zaman çizelgesinin sürekli aşağı kaymasına neden olan boyutlandırma hatası, grafiğin sabit yükseklikte bir konteynere alınması ve chart.js ayarlarının iyileştirilmesiyle giderildi.
-
-[1.5.0] - 2025-06-12
+## [1.5.0] - 2025-06-12
 Bu sürüm, proaktif tarama (Fırsat Avcısı) modülünü temelden yenileyerek çok daha stabil, akıllı ve yapılandırılabilir hale getirmeye odaklanmıştır.
 
 Eklendi (Added)
@@ -53,13 +59,13 @@ Dinamik Kara Liste Mekanizması: Sürekli hata veren semboller geçici olarak ka
 Değiştirildi (Changed)
 MİMARİ DEĞİŞİKLİK (Proaktif Tarama Mantığı): _execute_single_scan_cycle fonksiyonu tamamen yeniden yazıldı. Toplu analizden bireysel ve MTA tabanlı analize geçildi.
 
-[1.4.0] - 2025-06-12
+## [1.4.0] - 2025-06-12
 
 (Bu versiyon bir önceki geliştirme döngüsünde ara versiyon olarak kullanılmıştır)
 
-[1.3.1] - 2025-06-12
+## [1.3.1] - 2025-06-12
 
-(Kritik hata düzeltmeleri)
+- **(Kritik hata düzeltmeleri)**
 
 Bu sürüm, önceki sürümde tespit edilen ve botun temel işlevselliğini (analiz, senkronizasyon) etkileyen kritik hataları gidermeye odaklanan bir bakım sürümüdür. Ajan-araç etkileşimi daha sağlam hale getirilmiştir.
 

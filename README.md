@@ -1,25 +1,29 @@
-# Gemini Trading Agent v1.6.1
+# Gemini Trading Agent v1.7.0
 
-![Versiyon](https://img.shields.io/badge/versiyon-1.3.1-brightgreen) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet) ![Status](https://img.shields.io/badge/status-stabil-green)
+![Versiyon](https://img.shields.io/badge/versiyon-1.7.0-brightgreen) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet) ![Status](https://img.shields.io/badge/status-stabil-green)
 
-Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü kullanarak kripto para piyasalarında (Spot ve Futures) işlem yapan, gelişmiş risk yönetimi ve kalıcı veritabanı mimarisine sahip bir trading botu. Bu versiyon, kritik hatalardan arındırılmış ve stabil bir çalışma deneyimi sunmaktadır.
+Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü kullanarak kripto para piyasalarında işlem yapan, çok yönlü bir trading botu. Bu bot; teknik, duyarlılık ve temel analiz yeteneklerini birleştirerek piyasaları bütünsel bir yaklaşımla değerlendirir. Gelişmiş risk yönetimi ve kalıcı veritabanı mimarisine sahiptir.
 
 ## Temel Özellikler
 
-- **Yapay Zeka Destekli Analiz:** Google Gemini modellerini kullanarak tekli, toplu veya Çoklu Zaman Aralığı (MTA) ile derinlemesine analiz yapabilme.
+- **Çok Yönlü Yapay Zeka Analizi:** Google Gemini modellerini kullanarak piyasaları üç farklı boyutta analiz eder:
+  - **Teknik Analiz:** Fiyat grafikleri üzerinden Çoklu Zaman Aralığı (MTA) analizi yaparak trendleri ve giriş noktalarını belirler.
+  - **Duyarlılık Analizi:** Fonlama oranları (Funding Rates) ve emir defteri derinliği (Order Book Depth) gibi verilerle anlık piyasa iştahını ölçer.
+  - **Temel Analiz (Haber Duyarlılığı):** CryptoPanic API'si üzerinden en son haberleri okur. Piyasayı olumsuz etkileyebilecek (FUD, hack vb.) haberler durumunda, riskli işlemlerden kaçınır.
 - **Gelişmiş Risk Yönetimi:**
     - **Dinamik Pozisyon Boyutlandırma:** Sermayenin belirli bir yüzdesini riske atarak işlem büyüklüğünü dinamik olarak hesaplar.
-    - **İz Süren Zarar Durdur (Trailing Stop-Loss):** Kâra geçen pozisyonlarda kârı kilitlemek için stop-loss seviyesini otomatik olarak ayarlar.
     - **ATR Tabanlı SL/TP:** Piyasa volatilitesine göre Stop-Loss ve Take-Profit seviyelerini dinamik olarak belirler.
+    - **İz Süren Zarar Durdur (Trailing Stop-Loss):** Kâra geçen pozisyonlarda kârı kilitlemek için stop-loss seviyesini otomatik olarak ayarlar.
+    - **Kısmi Kâr Alma (Partial Take-Profit):** 1R hedefine ulaşıldığında pozisyonun bir kısmını kapatarak kârı realize eder ve riski sıfırlar.
 - **Kalıcı ve Sağlam Veritabanı Mimarisi:**
     - **SQLite Entegrasyonu:** Anlık pozisyonları ve tüm işlem geçmişini, yeniden başlatmalarda kaybolmayan sağlam bir SQLite veritabanında saklar.
     - **İşlem Geçmişi:** Kapanan her işlemin PNL ve kapanış durumu gibi detaylarını gelecekteki analizler için kaydeder.
 - **İki Farklı Tarama Modu:**
     - **Manuel Analiz:** İstediğiniz bir kripto parayı anlık olarak analiz edip işlem açma.
-    - **Proaktif Tarama (Fırsat Avcısı):** Binance'in "En Çok Yükselenler/Düşenler" listesini periyodik olarak tarayarak otomatik işlem fırsatları bulma.
-- **Sağlamlaştırılmış Ajan-Araç Etkileşimi:** Ajanın (AI) araçları (tools) kullanırken karşılaştığı hataları en aza indiren, yeniden yazılmış ve test edilmiş kod altyapısı.
+    - **Proaktif Tarama (Fırsat Avcısı):** Binance'in "En Çok Yükselenler/Düşenler" listesini ve beyaz listenizi periyodik olarak tarayarak otomatik işlem fırsatları bulma.
 - **Esnek Konfigürasyon:** Tüm strateji, risk ve API ayarlarının `config.py` üzerinden kolayca yönetilmesi.
 - **Canlı ve Simülasyon Modu:** Gerçek parayla işlem yapmadan önce stratejilerinizi test edebilmeniz için güvenli simülasyon modu.
+- **Web Arayüzü:** Botun performansını ve işlem geçmişini görselleştiren basit bir web panosu.
 
 ## Kullanılan Teknolojiler
 
@@ -29,6 +33,8 @@ Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü k
 - **CCXT:** Binance ve diğer borsalarla standartlaştırılmış iletişim için.
 - **Pandas & Pandas-TA:** Finansal verileri işlemek ve teknik analiz göstergelerini hesaplamak için.
 - **SQLite3:** Pozisyon ve işlem geçmişi verilerini saklamak için.
+- **Requests:** API istekleri için.
+- **Flask:** Web arayüzü için.
 - **Dotenv:** API anahtarları gibi hassas bilgileri güvenli bir şekilde yönetmek için.
 
 ## Kurulum
@@ -46,6 +52,16 @@ Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü k
 
 3.  **API Anahtarlarını Ayarlayın:**
     Proje dizinindeki `.env.example` dosyasını kopyalayarak `.env` adında yeni bir dosya oluşturun ve kendi API anahtarlarınızla doldurun.
+    ```dotenv
+    GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
+    BINANCE_API_KEY="YOUR_BINANCE_API_KEY"
+    BINANCE_SECRET_KEY="YOUR_BINANCE_SECRET_KEY"
+    CRYPTOPANIC_API_KEY="YOUR_CRYPTOPANIC_API_KEY"  # Haber analizi için bu anahtarı ekleyin
+    
+    TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
+    TELEGRAM_CHAT_ID="YOUR_TELEGRAM_CHAT_ID"
+    # ... diğer ayarlar
+    ```
 
 4.  **Botu Yapılandırın:**
     `config.py` dosyasını açarak strateji ve risk yönetimi ayarlarınızı (kaldıraç, risk yüzdesi, MTA, Trailing SL vb.) kendinize göre düzenleyin.
