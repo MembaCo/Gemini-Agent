@@ -2,6 +2,32 @@ Değişiklik Günlüğü (Changelog)
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
 Format, Keep a Changelog standardına dayanmaktadır.
 
+[1.9.0] - 2025-06-17
+Bu sürüm, bota yapay zeka kararları üzerinde manuel kontrol yeteneği kazandırarak, kullanıcı etkileşimini ve güvenliği önemli ölçüde artırmaktadır.
+
+Eklendi (Added)
+Ajan Kararları için Onay Mekanizması: config.py dosyasına AGENT_CLOSE_AUTO_CONFIRM ayarı eklendi. Bu ayar varsayılan olarak False'tur.
+
+Eğer bu ayar False ise, yapay zeka bir pozisyonu kapatmayı tavsiye ettiğinde (Yeniden Analiz Et menüsünde), bot terminalde kullanıcıdan "evet/hayır" şeklinde onay ister.
+
+Bu özellik, kullanıcılara ajanın kararlarını geçersiz kılma ve son sözü söyleme imkanı tanır.
+
+Değiştirildi (Changed)
+handle_reanalyze_position Mantığı: Bu fonksiyon, yeni AGENT_CLOSE_AUTO_CONFIRM ayarını kontrol edecek ve buna göre ya otomatik olarak pozisyonu kapatacak ya da kullanıcıdan onay isteyecek şekilde yeniden yapılandırıldı.
+
+[1.8.0] - 2025-06-17
+Bu sürüm, projenin temel mimarisinde önemli bir iyileştirme yaparak modüller arası döngüsel bağımlılık (circular dependency) sorununu ortadan kaldırmıştır. Ayrıca, botun Telegram üzerinden daha interaktif yönetilmesini sağlayan yeni özellikler eklenmiştir.
+
+Değiştirildi (Changed)
+MİMARİ DEĞİŞİKLİK (Circular Import Refactoring): main.py ve telegram_bot.py arasındaki döngüsel içe aktarma hatası, ana uygulama fonksiyonlarının (analiz, tara, pozisyon kapatma vb.) Telegram botuna argüman olarak geçirilmesiyle tamamen giderildi.
+
+handle_manual_close Fonksiyonu: Bu fonksiyon, işlemin sonucunu belirten bir metin (string) döndürecek şekilde yeniden düzenlendi.
+
+Eklendi (Added)
+Telegram Üzerinden Pozisyon Kapatma: Kullanıcılar artık /pozisyonlar komutuyla listeledikleri aktif pozisyonları, "❌ Kapat" butonuna basarak doğrudan Telegram arayüzünden kapatabilirler.
+
+Düzeltildi (Fixed)
+Asenkron Bloklama Sorunları: Telegram botundaki tüm senkron (bloklayıcı) fonksiyon çağrıları asyncio.to_thread kullanılarak ayrı bir iş parçacığında çalıştırılmaktadır.
 [1.8.0] - 2025-06-17
 Bu sürüm, projenin temel mimarisinde önemli bir iyileştirme yaparak modüller arası döngüsel bağımlılık (circular dependency) sorununu ortadan kaldırmıştır. Ayrıca, botun Telegram üzerinden daha interaktif yönetilmesini sağlayan yeni özellikler eklenmiştir.
 

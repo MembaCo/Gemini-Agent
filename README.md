@@ -1,79 +1,106 @@
 # Gemini Trading Agent v1.8.0
 
-![Versiyon](https://img.shields.io/badge/versiyon-1.8.0-blue) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet) ![Status](https://img.shields.io/badge/status-stabil-green)
+![Versiyon](https://img.shields.io/badge/versiyon-1.9.0-blue) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet) ![Status](https://img.shields.io/badge/status-stabil-green)
 
-Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü kullanarak kripto para piyasalarında işlem yapan, çok yönlü bir trading botu. Bu bot; teknik, duyarlılık ve temel analiz yeteneklerini birleştirerek piyasaları bütünsel bir yaklaşımla değerlendirir. Gelişmiş risk yönetimi ve kalıcı veritabanı mimarisine sahiptir.
+Gemini Trading Agent, Google'ın en gelişmiş yapay zeka modellerinden biri olan Gemini'yi kullanarak kripto para piyasalarında stratejik kararlar alan ve bu kararları uygulayan modern bir trading botudur. Proje, sadece teknik göstergelere bağlı kalmak yerine; teknik analizi, piyasa duyarlılığını ve en güncel haberleri birleştirerek piyasalara bütünsel bir bakış açısı sunar. Gelişmiş risk yönetimi modülleri, kalıcı veritabanı mimarisi ve interaktif kontrol mekanizmaları ile donatılmıştır.
 
-## Temel Özellikler
+🌟 Temel Özellikler
+🧠 Çok Yönlü Yapay Zeka Analizi:
 
-- **Çok Yönlü Yapay Zeka Analizi:** Google Gemini modellerini kullanarak piyasaları üç farklı boyutta analiz eder:
-  - **Teknik Analiz:** Fiyat grafikleri üzerinden Çoklu Zaman Aralığı (MTA) analizi yaparak trendleri ve giriş noktalarını belirler.
-  - **Duyarlılık Analizi:** Fonlama oranları (Funding Rates) ve emir defteri derinliği (Order Book Depth) gibi verilerle anlık piyasa iştahını ölçer.
-  - **Temel Analiz (Haber Duyarlılığı):** CryptoPanic API'si üzerinden en son haberleri okur. Piyasayı olumsuz etkileyebilecek (FUD, hack vb.) haberler durumunda, riskli işlemlerden kaçınır.
-- **Gelişmiş Risk Yönetimi:**
-    - **Dinamik Pozisyon Boyutlandırma:** Sermayenin belirli bir yüzdesini riske atarak işlem büyüklüğünü dinamik olarak hesaplar.
-    - **ATR Tabanlı SL/TP:** Piyasa volatilitesine göre Stop-Loss ve Take-Profit seviyelerini dinamik olarak belirler.
-    - **İz Süren Zarar Durdur (Trailing Stop-Loss):** Kâra geçen pozisyonlarda kârı kilitlemek için stop-loss seviyesini otomatik olarak ayarlar.
-    - **Kısmi Kâr Alma (Partial Take-Profit):** 1R hedefine ulaşıldığında pozisyonun bir kısmını kapatarak kârı realize eder ve riski sıfırlar.
-- **İnteraktif Telegram Kontrolü:**
-    - **Detaylı Durum Raporu:** `/status` komutu ile borsadaki ve bot tarafından yönetilen tüm pozisyonların anlık PNL durumunu görme.
-    - **Uzaktan Analiz ve Tarama:** `/analiz` ve `/tara` komutları ile botun analiz ve fırsat avcısı modüllerini tetikleme.
-    - **Pozisyon Yönetimi:** `/pozisyonlar` komutu ile aktif pozisyonları listeleme, yeniden analiz etme ve **doğrudan Telegram üzerinden pozisyon kapatma**.
-- **Kalıcı ve Sağlam Veritabanı Mimarisi:**
-    - **SQLite Entegrasyonu:** Anlık pozisyonları ve tüm işlem geçmişini, yeniden başlatmalarda kaybolmayan sağlam bir SQLite veritabanında saklar.
-    - **İşlem Geçmişi:** Kapanan her işlemin PNL ve kapanış durumu gibi detaylarını gelecekteki analizler için kaydeder.
-- **İki Farklı Tarama Modu:**
-    - **Manuel Analiz:** İstediğiniz bir kripto parayı anlık olarak analiz edip işlem açma.
-    - **Proaktif Tarama (Fırsat Avcısı):** Binance'in "En Çok Yükselenler/Düşenler" listesini ve beyaz listenizi periyodik olarak tarayarak otomatik işlem fırsatları bulma.
-- **Esnek Konfigürasyon:** Tüm strateji, risk ve API ayarlarının `config.py` üzerinden kolayca yönetilmesi.
-- **Canlı ve Simülasyon Modu:** Gerçek parayla işlem yapmadan önce stratejilerinizi test edebilmeniz için güvenli simülasyon modu.
-- **Web Arayüzü:** Botun performansını ve işlem geçmişini görselleştiren basit bir web panosu.
+Teknik Analiz: Fiyat grafikleri üzerinden Çoklu Zaman Aralığı (MTA) analizi yaparak ana trendleri ve kısa vadeli giriş noktalarını belirler.
 
-## Kullanılan Teknolojiler
+Duyarlılık Analizi: Fonlama oranları (Funding Rates) ve emir defteri derinliği (Order Book Depth) gibi verilerle anlık piyasa iştahını ve yatırımcı psikolojisini ölçer.
 
-- **Python 3.10+**
-- **LangChain & LangChain Google GenAI:** Yapay zeka ajanı oluşturma ve LLM entegrasyonu.
-- **Google Gemini API:** Analiz ve karar verme süreçleri için.
-- **CCXT:** Binance ve diğer borsalarla standartlaştırılmış iletişim için.
-- **Pandas & Pandas-TA:** Finansal verileri işlemek ve teknik analiz göstergelerini hesaplamak için.
-- **python-telegram-bot v22+:** Asenkron Telegram botu işlevselliği için.
-- **SQLite3:** Pozisyon ve işlem geçmişi verilerini saklamak için.
-- **Flask:** Web arayüzü için.
-- **Dotenv:** API anahtarları gibi hassas bilgileri güvenli bir şekilde yönetmek için.
+Temel Analiz (Haber Duyarlılığı): CryptoPanic API'si üzerinden en son haberleri okur. Piyasayı olumsuz etkileyebilecek (FUD, hack, regülasyon vb.) haberler durumunda, riskli işlemlerden kaçınarak sermayeyi korur.
 
-## Kurulum
+🛡️ Gelişmiş Risk Yönetimi:
 
-1.  **Projeyi Klonlayın:**
-    ```bash
-    git clone [https://github.com/membaco/gemini-trading-agent.git](https://github.com/membaco/gemini-trading-agent.git)
-    cd gemini-trading-agent
-    ```
+Dinamik Pozisyon Boyutlandırma: Toplam sermayenin önceden belirlenmiş bir yüzdesini riske atarak her işlem için pozisyon büyüklüğünü dinamik olarak hesaplar.
 
-2.  **Gerekli Kütüphaneleri Yükleyin:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+ATR Tabanlı SL/TP: Piyasa volatilitesini ölçen ATR (Average True Range) göstergesine göre Stop-Loss ve Take-Profit seviyelerini dinamik olarak belirler.
 
-3.  **API Anahtarlarını Ayarlayın:**
-    Proje dizinindeki `.env.example` dosyasını kopyalayarak `.env` adında yeni bir dosya oluşturun ve kendi API anahtarlarınızla doldurun.
-    ```dotenv
-    GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
-    BINANCE_API_KEY="YOUR_BINANCE_API_KEY"
-    BINANCE_SECRET_KEY="YOUR_BINANCE_SECRET_KEY"
-    CRYPTOPANIC_API_KEY="YOUR_CRYPTOPANIC_API_KEY"
-    
-    TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
-    TELEGRAM_CHAT_ID="YOUR_TELEGRAM_CHAT_ID"
-    # ... diğer ayarlar
-    ```
+İz Süren Zarar Durdur (Trailing Stop-Loss): Kâra geçen pozisyonlarda kârı kilitlemek ve zararı en aza indirmek için stop-loss seviyesini otomatik olarak yukarı taşır.
 
-4.  **Botu Yapılandırın:**
-    `config.py` dosyasını açarak strateji ve risk yönetimi ayarlarınızı (kaldıraç, risk yüzdesi, MTA, Trailing SL vb.) kendinize göre düzenleyin.
-    **ÖNEMLİ:** Bota alışana kadar `LIVE_TRADING` ayarını mutlaka `False` olarak bırakın!
+Kısmi Kâr Alma (Partial Take-Profit): 1R (risk mesafesi) hedefine ulaşıldığında pozisyonun bir kısmını otomatik kapatarak kârı realize eder ve kalan pozisyonun riskini sıfırlar (Breakeven).
 
-## Kullanım
+🎛️ Kullanıcı Kontrolü ve Etkileşim:
 
+Ajan Karar Onayı: Yapay zekanın "Pozisyonu Kapat" tavsiyelerinden sonra, işlem yapmadan önce terminal üzerinden manuel onay alınmasını sağlayan güvenlik mekanizması. (config.py üzerinden otomatikleştirilebilir).
+
+İnteraktif Telegram Kontrolü: /status, /analiz, /tara ve /pozisyonlar gibi komutlarla botu uzaktan yönetme ve doğrudan Telegram arayüzü üzerinden pozisyon kapatma imkanı.
+
+💾 Kalıcı ve Sağlam Veritabanı Mimarisi:
+
+SQLite Entegrasyonu: Tüm aktif pozisyonları ve kapanan işlemlerin geçmişini (PNL, giriş/çıkış fiyatları, kapanış nedeni vb.) yeniden başlatmalarda kaybolmayan sağlam bir SQLite veritabanında saklar.
+
+🔭 İki Farklı Tarama Modu:
+
+Manuel Analiz: Belirlediğiniz bir kripto parayı anlık olarak analiz edip işlem açma.
+
+Proaktif Tarama (Fırsat Avcısı): Binance'in "En Çok Yükselenler/Düşenler" listesini ve sizin belirlediğiniz bir beyaz listeyi periyodik olarak tarayarak otomatik işlem fırsatları arama.
+
+⚙️ Esnek Konfigürasyon:
+
+Tüm strateji (MTA, Risk/Ödül oranı), risk (RISK_PER_TRADE_PERCENT) ve API ayarlarının config.py dosyası üzerinden kolayca yönetilmesi.
+
+📊 Web Arayüzü:
+
+Botun performansını, kâr/zarar durumunu ve tüm işlem geçmişini grafiksel olarak görselleştiren basit bir web panosu.
+
+🛠️ Kullanılan Teknolojiler
+Dil: Python 3.10+
+
+Yapay Zeka: Google Gemini API, LangChain & LangChain Google GenAI
+
+Borsa Entegrasyonu: CCXT
+
+Veri Analizi & TA: Pandas & Pandas-TA
+
+Veritabanı: SQLite3
+
+Bot/Arayüz: python-telegram-bot (v22+), Flask
+
+Yardımcılar: python-dotenv, Tenacity
+
+🚀 Kurulum ve Başlatma
+1. Projeyi Klonlayın
+git clone [https://github.com/MembaCo/Gemini-Agent.git](https://github.com/MembaCo/Gemini-Agent.git)
+cd Gemini-Agent
+
+2. Gerekli Kütüphaneleri Yükleyin
+pip install -r requirements.txt
+
+3. API Anahtarlarını Ayarlayın
+Proje dizinindeki .env.example dosyasını kopyalayarak .env adında yeni bir dosya oluşturun ve kendi API anahtarlarınızla doldurun.
+
+.env dosya örneği:
+
+# Google AI Studio'dan alınan Gemini API anahtarı
+GOOGLE_API_KEY="AIzaSyXXXXXXXXXXXXXXXXXXX"
+
+# Binance API Anahtarları
+BINANCE_API_KEY="YOUR_BINANCE_API_KEY"
+BINANCE_SECRET_KEY="YOUR_BINANCE_SECRET_KEY"
+
+# Haber analizi için (isteğe bağlı)
+CRYPTOPANIC_API_KEY="YOUR_CRYPTOPANIC_API_KEY"
+
+# Telegram Bot için (isteğe bağlı)
+TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID="YOUR_TELEGRAM_CHAT_ID"
+
+# Testnet kullanmak için "true" yapın
+USE_TESTNET="false"
+
+# Ajan loglarını detaylı görmek için "true" yapın
+AGENT_VERBOSE="true"
+
+ÖNEMLİ: Bota alışana kadar LIVE_TRADING ayarını config.py dosyasından False olarak bırakmanız şiddetle tavsiye edilir!
+
+4. Botu Başlatın
 Tüm ayarları tamamladıktan sonra botu aşağıdaki komutla başlatabilirsiniz:
 
-```bash
 python main.py
+
+📜 Sorumluluk Reddi
+Bu proje yalnızca eğitim ve araştırma amaçlıdır. Finansal tavsiye niteliği taşımaz. Kripto para ticareti yüksek risk içerir ve tüm sermayenizi kaybetmenize neden olabilir. Bu yazılımın kullanılmasından kaynaklanabilecek herhangi bir finansal kayıptan yazar veya katkıda bulunanlar sorumlu tutulamaz. Her zaman kendi araştırmanızı yapın ve asla kaybetmeyi göze alamayacağınız parayla işlem yapmayın.

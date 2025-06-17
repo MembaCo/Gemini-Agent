@@ -38,10 +38,15 @@ def initialize_exchange(market_type: str = "spot"):
     if not api_key or not secret_key:
         logging.critical("API anahtarları .env dosyasında bulunamadı! Program sonlandırılıyor.")
         exit()
+        
     config_data = {
-        "apiKey": api_key, "secret": secret_key,
+        "apiKey": api_key,
+        "secret": secret_key,
         "options": {"defaultType": market_type.lower()},
         "enableRateLimit": True,
+        # HATA DÜZELTME: Sunucu zamanı ile yerel zaman arasındaki farkı otomatik olarak ayarlar.
+        # Bu, 'timestamp' hatalarını önler.
+        'adjustForTimeDifference': True,
     }
     
     if use_testnet and market_type.lower() == 'future':
@@ -53,7 +58,7 @@ def initialize_exchange(market_type: str = "spot"):
 
     try:
         exchange.load_markets()
-        logging.info(f"--- Piyasalar, '{market_type.upper()}' pazarı için başarıyla yüklendi. ---")
+        logging.info(f"--- Piyasalar, '{market_type.upper()}' pazarı için başarıyla yüklendi. (Sunucu zamanı senkronize edildi)")
     except Exception as e:
         logging.critical(f"'{market_type.upper()}' piyasaları yüklenirken kritik hata: {e}")
         exchange = None
@@ -376,7 +381,8 @@ def get_open_positions_from_exchange(tool_input: str = "") -> list:
     """Borsadaki mevcut açık vadeli işlem pozisyonlarını çeker."""
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future': return []
     try:
-        all_positions = exchange.fetch_positions(params={'type': config.DEFAULT_MARKET_TYPE})
+        # fetch_positions yerine daha güvenilir olan positionRisk kullanılıyor.
+        all_positions = exchange.fetch_positions_risk()
         return [p for p in all_positions if p.get('contracts') and float(p['contracts']) != 0]
     except Exception as e:
         logging.error(f"Borsadan pozisyonlar alınırken hata oluştu: {e}")

@@ -1,10 +1,14 @@
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.8.0" # Mimari iyileştirme ve Telegram'dan pozisyon kapatma eklendi
+APP_VERSION = "1.9.0" # Ajan kapatma kararları için onay mekanizması eklendi
 
 # === YAPAY ZEKA MODEL AYARI ===
 GEMINI_MODEL = 'gemini-1.5-flash' # veya kullandığınız diğer model
+
+# === AJAN AYARLARI ===
+# Ajan'ın 'KAPAT' tavsiyesi verdiğinde, kullanıcı onayı olmadan pozisyonu otomatik olarak kapatıp kapatmayacağını belirler.
+AGENT_CLOSE_AUTO_CONFIRM = False
 
 # === STRATEJİ AYARLARI ===
 USE_MTA_ANALYSIS = True

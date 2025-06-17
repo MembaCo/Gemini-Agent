@@ -253,7 +253,6 @@ def check_and_manage_positions():
                                 new_sl_price = entry_price
                                 try:
                                     if config.LIVE_TRADING and tools.exchange:
-                                        # HATA DÜZELTME: Doğrudan `tools.exchange` kullanılıyor.
                                         tools.exchange.create_order(symbol, 'STOP_MARKET', ('sell' if side == 'buy' else 'buy'), remaining_amount, None, {'stopPrice': new_sl_price, 'reduceOnly': True})
                                         logging.info(f"Başarılı: Kalan pozisyon için yeni SL emri {new_sl_price} olarak oluşturuldu.")
                                 except Exception as e:
@@ -283,7 +282,6 @@ def check_and_manage_positions():
                             cancel_all_open_orders.invoke(symbol)
                             time.sleep(1)
                             if config.LIVE_TRADING and tools.exchange:
-                                # HATA DÜZELTME: Doğrudan `tools.exchange` kullanılıyor.
                                 tools.exchange.create_order(symbol, 'STOP_MARKET', opposite_side, db_pos['amount'], None, {'stopPrice': new_sl_candidate, 'reduceOnly': True})
                             database.update_position_sl(symbol, new_sl_candidate)
                         except Exception as e:
@@ -769,20 +767,34 @@ def _get_reanalysis_report(position: dict) -> str:
         })
     
 def handle_reanalyze_position(position):
+    """Bir pozisyonu yeniden analiz eder ve ajanın tavsiyesine göre işlem yapar (gerekirse onay alarak)."""
     print(f"\n--- {position['symbol']} Pozisyonu Yeniden Analiz Ediliyor... ---")
     
     report_json_str = _get_reanalysis_report(position)
     report_data = json.loads(report_json_str)
 
     # HTML'i temizleyerek konsolda göster
-    report_text_for_console = report_data.get('report_text', '').replace('<b>', '').replace('</b>', '').replace('<i>', '').replace('</i>', '')
+    report_text_for_console = report_data.get('report_text', '').replace('<b>', '').replace('</b>', '').replace('<i>', '').replace('</i>', '').replace('⚠️', '')
     print(report_text_for_console)
     
     recommendation = report_data.get('recommendation')
+    
     if recommendation == 'KAPAT':
-        print("\nAJAN 'KAPAT' TAVSİYESİ VERDİ. POZİSYON KAPATILIYOR...")
-        close_result = handle_manual_close(position, from_auto=True, close_reason="AGENT_CLOSE") 
-        print(close_result)
+        print("\n⚠️ AJAN 'KAPAT' TAVSİYESİ VERDİ! ⚠️")
+        
+        if config.AGENT_CLOSE_AUTO_CONFIRM:
+            print("Otomatik onay aktif. Pozisyon kapatılıyor...")
+            close_result = handle_manual_close(position, from_auto=True, close_reason="AGENT_CLOSE")
+            print(close_result)
+        else:
+            onay = input(f">>> {position['symbol']} pozisyonu kapatılsın mı? (evet/hayır): ").lower()
+            if onay == 'evet':
+                print("Pozisyon kapatılıyor...")
+                close_result = handle_manual_close(position, from_auto=True, close_reason="AGENT_CLOSE")
+                print(close_result)
+            else:
+                print("Kapatma işlemi iptal edildi.")
+
     elif recommendation != "HATA":
         print("\nAJAN 'TUT' TAVSİYESİ VERDİ. POZİSYON AÇIK KALIYOR.")
             
