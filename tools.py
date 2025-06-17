@@ -44,8 +44,6 @@ def initialize_exchange(market_type: str = "spot"):
         "secret": secret_key,
         "options": {"defaultType": market_type.lower()},
         "enableRateLimit": True,
-        # HATA DÜZELTME: Sunucu zamanı ile yerel zaman arasındaki farkı otomatik olarak ayarlar.
-        # Bu, 'timestamp' hatalarını önler.
         'adjustForTimeDifference': True,
     }
     
@@ -173,9 +171,16 @@ def get_technical_indicators(symbol_and_timeframe: str) -> dict:
             return {"status": "error", "message": f"İndikatör hesaplaması için yetersiz veri ({len(bars)} mum)."}
         
         df = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
-        for col in ['open', 'high', 'low', 'close']:
-            df[col] = pd.to_numeric(df[col])
+        
+        # HATA DÜZELTME: Veri kalitesini sağlamak için daha sağlam bir kontrol eklendi.
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        df.dropna(inplace=True)
+        if len(df) < 50:
+            return {"status": "error", "message": f"Bozuk veriler temizlendikten sonra yetersiz veri kaldı ({len(df)} mum)."}
 
+        # Göstergeleri hesapla
         df.ta.rsi(append=True)
         df.ta.macd(append=True)
         df.ta.bbands(length=20, std=2, append=True)
@@ -190,6 +195,8 @@ def get_technical_indicators(symbol_and_timeframe: str) -> dict:
             "stoch_k": last_row.get('STOCHk_14_3_3'), "stoch_d": last_row.get('STOCHd_14_3_3'),
             "adx": last_row.get('ADX_14')
         }
+        
+        # Hesaplama sonrası NaN kontrolü
         if any(value is None or pd.isna(value) for value in indicators.values()):
             return {"status": "error", "message": f"İndikatör hesaplanamadı (NaN). Sembol: {symbol}"}
         
@@ -292,6 +299,10 @@ def get_latest_news(symbol: str) -> str:
         
         return "En son haberler:\n" + "\n".join(headlines)
         
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            return "HATA: Haberler alınamadı (403 Forbidden). Lütfen CryptoPanic API anahtarınızın geçerli ve doğru plana sahip olduğundan emin olun."
+        return f"HATA: Haberler alınırken HTTP hatası oluştu: {e}"
     except requests.RequestException as e:
         return f"HATA: Haberler alınırken ağ hatası oluştu: {e}"
     except Exception as e:
@@ -381,7 +392,6 @@ def get_open_positions_from_exchange(tool_input: str = "") -> list:
     """Borsadaki mevcut açık vadeli işlem pozisyonlarını çeker."""
     if not exchange or config.DEFAULT_MARKET_TYPE != 'future': return []
     try:
-        # fetch_positions yerine daha güvenilir olan positionRisk kullanılıyor.
         all_positions = exchange.fetch_positions_risk()
         return [p for p in all_positions if p.get('contracts') and float(p['contracts']) != 0]
     except Exception as e:

@@ -2,6 +2,17 @@ Değişiklik Günlüğü (Changelog)
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
 Format, Keep a Changelog standardına dayanmaktadır.
 
+[1.9.1] - 2025-06-17
+Bu, botun stabilitesini ve verimliliğini artıran bir bakım sürümüdür. Özellikle proaktif tarama modülündeki tekrarlayan hatalar hedeflenmiştir.
+
+Eklendi (Added)
+Dinamik Kara Liste: Proaktif tarama sırasında, teknik analiz verisi alınamayan veya sürekli NaN hatası veren coin'ler artık dinamik olarak 1 saatliğine bir kara listeye alınmaktadır. Bu, botun aynı hatalı coin'leri tekrar tekrar analiz ederek zaman ve kaynak israf etmesini önler.
+
+Değiştirildi (Changed)
+get_technical_indicators Sağlamlığı: tools.py içerisindeki bu fonksiyon, borsadan gelen bozuk veya eksik verileri (NaN değerleri) hesaplama yapmadan önce otomatik olarak temizleyecek şekilde iyileştirildi. Bu, NaN hatalarının büyük bir kısmını kaynağında çözer.
+
+Haber API'si Hata Mesajları: get_latest_news aracı, 403 Forbidden gibi API anahtarı veya izinleriyle ilgili hatalarda artık daha açıklayıcı bir mesaj döndürerek sorunun teşhisini kolaylaştırır.
+
 [1.9.0] - 2025-06-17
 Bu sürüm, bota yapay zeka kararları üzerinde manuel kontrol yeteneği kazandırarak, kullanıcı etkileşimini ve güvenliği önemli ölçüde artırmaktadır.
 

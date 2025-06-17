@@ -596,7 +596,8 @@ def _execute_single_scan_cycle():
         )
 
         if not analysis_result:
-            logging.warning(f"{symbol} için analiz tamamlanamadı, bir sonraki sembole geçiliyor.")
+            logging.warning(f"{symbol} için analiz tamamlanamadı, 1 saatliğine dinamik kara listeye ekleniyor.")
+            BLACKLISTED_SYMBOLS[symbol] = time.time() + 3600  # 1 saat (3600 saniye)
             continue
         
         print(json.dumps(analysis_result, indent=2, ensure_ascii=False))

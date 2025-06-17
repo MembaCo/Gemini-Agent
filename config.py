@@ -1,7 +1,7 @@
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.9.0" # Ajan kapatma kararları için onay mekanizması eklendi
+APP_VERSION = "1.9.1" # NaN hataları için dinamik kara liste ve daha sağlam analiz eklendi
 
 # === YAPAY ZEKA MODEL AYARI ===
 GEMINI_MODEL = 'gemini-1.5-flash' # veya kullandığınız diğer model
