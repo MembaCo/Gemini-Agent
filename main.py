@@ -14,13 +14,15 @@ from langchain.agents import AgentExecutor, create_react_agent
 from langchain import hub
 from telegram_bot import run_telegram_bot
 
+# 'exchange' nesnesini doğrudan import etmek yerine, modüle tools üzerinden erişeceğiz.
+import tools 
 from tools import (
     get_market_price, get_technical_indicators, execute_trade_order,
     initialize_exchange, get_open_positions_from_exchange, get_atr_value,
     _get_unified_symbol, get_top_gainers_losers, _fetch_price_natively,
     str_to_bool, get_wallet_balance, 
     cancel_all_open_orders, get_funding_rate, get_order_book_depth, calculate_pnl,
-    get_latest_news, exchange
+    get_latest_news
 )
 import config
 import database
@@ -250,9 +252,10 @@ def check_and_manage_positions():
 
                                 new_sl_price = entry_price
                                 try:
-                                    if config.LIVE_TRADING:
-                                        exchange.create_order(symbol, 'STOP_MARKET', ('sell' if side == 'buy' else 'buy'), remaining_amount, None, {'stopPrice': new_sl_price, 'reduceOnly': True})
-                                    logging.info(f"Başarılı: Kalan pozisyon için yeni SL emri {new_sl_price} olarak oluşturuldu.")
+                                    if config.LIVE_TRADING and tools.exchange:
+                                        # HATA DÜZELTME: Doğrudan `tools.exchange` kullanılıyor.
+                                        tools.exchange.create_order(symbol, 'STOP_MARKET', ('sell' if side == 'buy' else 'buy'), remaining_amount, None, {'stopPrice': new_sl_price, 'reduceOnly': True})
+                                        logging.info(f"Başarılı: Kalan pozisyon için yeni SL emri {new_sl_price} olarak oluşturuldu.")
                                 except Exception as e:
                                     logging.error(f"Kısmi TP sonrası yeni SL emri oluşturulurken HATA: {e}", exc_info=True)
 
@@ -279,8 +282,9 @@ def check_and_manage_positions():
                         try:
                             cancel_all_open_orders.invoke(symbol)
                             time.sleep(1)
-                            if config.LIVE_TRADING:
-                                exchange.create_order(symbol, 'STOP_MARKET', opposite_side, db_pos['amount'], None, {'stopPrice': new_sl_candidate, 'reduceOnly': True})
+                            if config.LIVE_TRADING and tools.exchange:
+                                # HATA DÜZELTME: Doğrudan `tools.exchange` kullanılıyor.
+                                tools.exchange.create_order(symbol, 'STOP_MARKET', opposite_side, db_pos['amount'], None, {'stopPrice': new_sl_candidate, 'reduceOnly': True})
                             database.update_position_sl(symbol, new_sl_candidate)
                         except Exception as e:
                             logging.error(f"Trailing SL güncellenirken hata: {e}")
@@ -792,7 +796,7 @@ def launch_dashboard():
     print("\n--- 📈 Web Arayüzü Başlatılıyor... ---")
     try:
         subprocess.Popen([sys.executable, dashboard_script])
-        print("✅ Sunucu başlatıldı. [http://127.0.0.1:5001](http://127.0.0.1:5001) adresini tarayıcıda açın.")
+        print("✅ Sunucu başlatıldı. http://127.0.0.1:5001 adresini tarayıcıda açın.")
     except Exception as e:
         print(f"❌ Web arayüzü başlatılamadı: {e}")
 
