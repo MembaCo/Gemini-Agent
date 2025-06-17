@@ -1,4 +1,4 @@
-# Gemini Trading Agent v1.8.0
+# Gemini Trading Agent v1.9.0
 
 ![Versiyon](https://img.shields.io/badge/versiyon-1.9.0-blue) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet) ![Status](https://img.shields.io/badge/status-stabil-green)
 
