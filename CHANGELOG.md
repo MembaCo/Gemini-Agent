@@ -1,29 +1,44 @@
-# Değişiklik Günlüğü (Changelog)
-
+Değişiklik Günlüğü (Changelog)
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
-Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına dayanmaktadır.
+Format, Keep a Changelog standardına dayanmaktadır.
 
-## [1.7.0] - 2025-06-16
+[1.8.0] - 2025-06-17
+Bu sürüm, projenin temel mimarisinde önemli bir iyileştirme yaparak modüller arası döngüsel bağımlılık (circular dependency) sorununu ortadan kaldırmıştır. Ayrıca, botun Telegram üzerinden daha interaktif yönetilmesini sağlayan yeni özellikler eklenmiştir.
 
+Değiştirildi (Changed)
+MİMARİ DEĞİŞİKLİK (Circular Import Refactoring): main.py ve telegram_bot.py arasındaki döngüsel içe aktarma hatası, ana uygulama fonksiyonlarının (analiz, tara, pozisyon kapatma vb.) Telegram botuna argüman olarak geçirilmesiyle tamamen giderildi. Bu, daha modüler ve bakımı kolay bir kod yapısı sağlar.
+
+handle_manual_close Fonksiyonu: Bu fonksiyon artık sadece konsola çıktı basmak yerine, işlemin sonucunu belirten bir metin (string) döndürecek şekilde yeniden düzenlendi. Bu, Telegram gibi arayüzlerin işlem sonucunu kullanıcıya doğru bir şekilde bildirmesini sağlar.
+
+Eklendi (Added)
+Telegram Üzerinden Pozisyon Kapatma: Kullanıcılar artık /pozisyonlar komutuyla listeledikleri aktif pozisyonları, "❌ Kapat" butonuna basarak doğrudan Telegram arayüzünden kapatabilirler. Bu işlem için ek bir onay adımı da bulunmaktadır.
+
+Düzeltildi (Fixed)
+Asenkron Bloklama Sorunları: Telegram botundaki tüm senkron (bloklayıcı) fonksiyon çağrıları (analiz, tarama, pozisyon durumu sorgulama vb.) artık asyncio.to_thread kullanılarak ayrı bir iş parçacığında çalıştırılmaktadır. Bu, botun kullanıcı komutlarına her zaman anında yanıt vermesini sağlar.
+
+[1.7.0] - 2025-06-16
 Bu sürüm, bota temel analiz yeteneği kazandırarak karar mekanizmasını çok daha sofistike hale getirmeye odaklanmıştır. Artık bot, sadece teknik göstergelere değil, piyasayı etkileyebilecek en güncel haberlere de bakarak işlem yapmaktadır. Ayrıca, önceki sürümlerde tespit edilen kritik hatalar giderilmiştir.
 
-### Eklendi (Added)
-- **Haber Analizi (Temel Analiz) Entegrasyonu:** Bot artık bir işlem kararı vermeden önce, ilgili kripto para hakkındaki en son haberleri analiz etme yeteneğine sahiptir.
-  - **CryptoPanic API Entegrasyonu:** `tools.py` içine, CryptoPanic API'sini kullanarak haber başlıklarını ve duyarlılık oylarını çeken yeni bir `get_latest_news` aracı eklendi.
-  - **Güvenlik Odaklı Karar Verme:** Yapay zeka prompt'ları, analize başlamadan önce haberleri kontrol edecek şekilde güncellendi. Eğer piyasayı olumsuz etkileyebilecek (FUD, hack, regülasyon vb.) bir haber varsa, bot diğer tüm sinyaller olumlu olsa bile işlemi açmayarak "BEKLE" kararı verir.
+Eklendi (Added)
+Haber Analizi (Temel Analiz) Entegrasyonu: Bot artık bir işlem kararı vermeden önce, ilgili kripto para hakkındaki en son haberleri analiz etme yeteneğine sahiptir.
 
-### Değiştirildi (Changed)
-- **Yapay Zeka Prompt'ları:** `main.py` içerisindeki `create_mta_analysis_prompt`, `create_final_analysis_prompt` ve `create_reanalysis_prompt` fonksiyonları, yeni haber verilerini işleyecek ve analiz sürecine dahil edecek şekilde tamamen yeniden yapılandırıldı.
-- **Ajan Yetenekleri:** LangChain ajanının araç seti (`agent_tools`), yeni `get_latest_news` aracını içerecek şekilde genişletildi. Ajanın maksimum iterasyon sayısı, daha karmaşık analizler için artırıldı.
+CryptoPanic API Entegrasyonu: tools.py içine, CryptoPanic API'sini kullanarak haber başlıklarını ve duyarlılık oylarını çeken yeni bir get_latest_news aracı eklendi.
 
-### Düzeltildi (Fixed)
-- **Veritabanı Kayıt Hatası (`TypeError`):** Pozisyon kapatıldıktan sonra işlem geçmişine kayıt yapılırken, `calculate_pnl` yardımcı fonksiyonunun yanlışlıkla `@tool` olarak etiketlenmesinden kaynaklanan `TypeError` hatası, ilgili dekoratör kaldırılarak giderildi.
-- **Ajan Girdi Ayrıştırma Hatası:** Ajanın `get_technical_indicators` aracına `SEMBOL@ZAMAN_DİLİMİ` formatında girdi göndermesi durumunda oluşan sembol ayrıştırma hatası düzeltildi. `_parse_symbol_timeframe_input` fonksiyonu artık `@` karakterini de geçerli bir ayırıcı olarak tanımaktadır.
+Güvenlik Odaklı Karar Verme: Yapay zeka prompt'ları, analize başlamadan önce haberleri kontrol edecek şekilde güncellendi. Eğer piyasayı olumsuz etkileyebilecek (FUD, hack, regülasyon vb.) bir haber varsa, bot diğer tüm sinyaller olumlu olsa bile işlemi açmayarak "BEKLE" kararı verir.
 
+Değiştirildi (Changed)
+Yapay Zeka Prompt'ları: main.py içerisindeki create_mta_analysis_prompt, create_final_analysis_prompt ve create_reanalysis_prompt fonksiyonları, yeni haber verilerini işleyecek ve analiz sürecine dahil edecek şekilde tamamen yeniden yapılandırıldı.
 
-## [1.6.1] - 2025-06-13
-### Düzeltildi (Fixed)
-- **KRİTİK HATA (AttributeError):** `config.py` dosyasından yanlışlıkla silinen `ATR_MULTIPLIER_SL` parametresi geri eklendi. Bu hata, botun yeni bir pozisyon açmaya çalışırken Stop-Loss mesafesini hesaplayamamasına ve programın çökmesine neden oluyordu.
+Ajan Yetenekleri: LangChain ajanının araç seti (agent_tools), yeni get_latest_news aracını içerecek şekilde genişletildi. Ajanın maksimum iterasyon sayısı, daha karmaşık analizler için artırıldı.
+
+Düzeltildi (Fixed)
+Veritabanı Kayıt Hatası (TypeError): Pozisyon kapatıldıktan sonra işlem geçmişine kayıt yapılırken, calculate_pnl yardımcı fonksiyonunun yanlışlıkla @tool olarak etiketlenmesinden kaynaklanan TypeError hatası, ilgili dekoratör kaldırılarak giderildi.
+
+Ajan Girdi Ayrıştırma Hatası: Ajanın get_technical_indicators aracına SEMBOL@ZAMAN_DİLİMİ formatında girdi göndermesi durumunda oluşan sembol ayrıştırma hatası düzeltildi. _parse_symbol_timeframe_input fonksiyonu artık @ karakterini de geçerli bir ayırıcı olarak tanımaktadır.
+
+[1.6.1] - 2025-06-13
+Düzeltildi (Fixed)
+KRİTİK HATA (AttributeError): config.py dosyasından yanlışlıkla silinen ATR_MULTIPLIER_SL parametresi geri eklendi. Bu hata, botun yeni bir pozisyon açmaya çalışırken Stop-Loss mesafesini hesaplayamamasına ve programın çökmesine neden oluyordu.
 
 
 ## [1.6.0] - 2025-06-13

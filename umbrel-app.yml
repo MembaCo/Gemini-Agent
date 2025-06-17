@@ -1,0 +1,86 @@
+# @author: Memba Co.
+manifestVersion: 1
+id: gemini-trading-agent
+name: Gemini Trading Agent
+tagline: AI-Powered Crypto Trading Bot
+icon: https://raw.githubusercontent.com/getumbrel/umbrel-apps/master/symbols/bitcoin.svg # TODO: Kendi ikonunuzun URL'si ile değiştirin.
+category: Finance
+version: "1.8.0"
+port: 5001
+description: >-
+  Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü kullanarak kripto para piyasalarında işlem yapan, çok yönlü bir trading botu. 
+  
+  Bu bot; teknik, duyarlılık ve temel analiz yeteneklerini birleştirerek piyasaları bütünsel bir yaklaşımla değerlendirir. Gelişmiş risk yönetimi ve kalıcı veritabanı mimarisine sahiptir.
+developer: Memba Co.
+website: https://github.com/MembaCo/Gemini-Agent
+repo: https://github.com/MembaCo/Gemini-Agent
+support: https://github.com/MembaCo/Gemini-Agent/issues
+gallery:
+  - https://i.imgur.com/example1.png # TODO: Kendi ekran görüntülerinizi ekleyin
+  - https://i.imgur.com/example2.png
+releaseNotes: >-
+  Bu sürüm, projenin temel mimarisinde önemli bir iyileştirme yaparak modüller arası döngüsel bağımlılık (circular dependency) sorununu ortadan kaldırmıştır.
+  Ayrıca, botun Telegram üzerinden daha interaktif yönetilmesini sağlayan yeni özellikler eklenmiştir. Artık pozisyonlarınızı doğrudan Telegram'dan kapatabilirsiniz.
+permissions:
+  - "network"
+dependencies: []
+submitter: Memba Co.
+submission: https://github.com/MembaCo/Gemini-Agent
+
+# Kullanıcının Umbrel arayüzü üzerinden gireceği ortam değişkenleri
+env:
+  - name: GOOGLE_API_KEY
+    type: string
+    required: true
+    label: Google API Key
+    description: "Google Gemini AI modellerine erişim için API anahtarınız."
+    placeholder: "AIzaSy..."
+  - name: BINANCE_API_KEY
+    type: string
+    required: true
+    label: Binance API Key
+    description: "Binance hesabınıza ait API anahtarı."
+  - name: BINANCE_SECRET_KEY
+    type: password
+    required: true
+    label: Binance Secret Key
+    description: "Binance hesabınıza ait gizli anahtar."
+  - name: CRYPTOPANIC_API_KEY
+    type: password
+    required: false
+    label: CryptoPanic API Key
+    description: "Haber analizi özelliği için CryptoPanic API anahtarınız (isteğe bağlı)."
+  - name: TELEGRAM_BOT_TOKEN
+    type: password
+    required: false
+    label: Telegram Bot Token
+    description: "Bildirimler ve uzaktan kontrol için Telegram botunuzun token'ı (isteğe bağlı)."
+  - name: TELEGRAM_CHAT_ID
+    type: string
+    required: false
+    label: Telegram Chat ID
+    description: "Telegram bildirimlerinin gönderileceği sohbet veya kanal ID'si (isteğe bağlı)."
+  - name: USE_TESTNET
+    type: boolean
+    required: false
+    label: Use Binance Testnet
+    description: "Aktif edilirse, bot Binance Futures Testnet üzerinde çalışır. Gerçek para kullanılmaz."
+    value: false
+  - name: AGENT_VERBOSE
+    type: boolean
+    required: false
+    label: Agent Verbose Logging
+    description: "Yapay zeka ajanının düşünce süreçlerini detaylı olarak loglar."
+    value: true
+  - name: LANGCHAIN_TRACING_V2
+    type: string
+    hidden: true
+    value: "false"
+  - name: LANGCHAIN_API_KEY
+    type: string
+    hidden: true
+    value: ""
+  - name: LANGCHAIN_PROJECT
+    type: string
+    hidden: true
+    value: "Gemini Trading Agent"

@@ -1,7 +1,7 @@
 # @author: Memba Co.
 
 # === UYGULAMA VERSİYONU ===
-APP_VERSION = "1.7.0" # Haber analizi özelliği eklendi
+APP_VERSION = "1.8.0" # Mimari iyileştirme ve Telegram'dan pozisyon kapatma eklendi
 
 # === YAPAY ZEKA MODEL AYARI ===
 GEMINI_MODEL = 'gemini-1.5-flash' # veya kullandığınız diğer model
@@ -10,9 +10,9 @@ GEMINI_MODEL = 'gemini-1.5-flash' # veya kullandığınız diğer model
 USE_MTA_ANALYSIS = True
 MTA_TREND_TIMEFRAME = "4h"
 
-# YENİ: HABER ANALİZİ AYARI
+# HABER ANALİZİ AYARI
 # Botun işlem kararı verirken CryptoPanic API'si üzerinden haberleri kontrol edip etmeyeceğini belirler.
-USE_NEWS_ANALYSIS = True
+USE_NEWS_ANALYSIS = False
 
 # === CANLI İŞLEM AYARI (DİKKAT!) ===
 LIVE_TRADING = True

@@ -1,4 +1,4 @@
-# main.py (HABER ANALİZİ EKLENMİŞ TAM SÜRÜM)
+# main.py
 # @author: Memba Co.
 
 import os
@@ -12,20 +12,21 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain import hub
+from telegram_bot import run_telegram_bot
 
-# GÜNCELLENDİ: Yeni haber aracı import edildi
 from tools import (
     get_market_price, get_technical_indicators, execute_trade_order,
     initialize_exchange, get_open_positions_from_exchange, get_atr_value,
     _get_unified_symbol, get_top_gainers_losers, _fetch_price_natively,
-    str_to_bool, get_wallet_balance, update_stop_loss_order,
+    str_to_bool, get_wallet_balance, 
     cancel_all_open_orders, get_funding_rate, get_order_book_depth, calculate_pnl,
-    get_latest_news # <--- YENİ ARAÇ
+    get_latest_news, exchange
 )
 import config
 import database
 from notifications import send_telegram_message, format_open_position_message, format_close_position_message, format_partial_tp_message
 
+# --- Ortam Değişkenleri ve Loglama Ayarları ---
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
@@ -35,111 +36,118 @@ os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "Gemini Trading
 
 BLACKLISTED_SYMBOLS = {}
 
+# --- Yapay Zeka Ajanının Başlatılması ---
 try:
     llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0.1)
-    # GÜNCELLENDİ: Ajanın araç listesine yeni fonksiyonlar eklendi
     agent_tools = [get_market_price, get_technical_indicators, get_funding_rate, get_order_book_depth, get_latest_news]
     prompt_template = hub.pull("hwchase17/react")
     agent = create_react_agent(llm=llm, tools=agent_tools, prompt=prompt_template)
     agent_executor = AgentExecutor(
         agent=agent, tools=agent_tools, verbose=str_to_bool(os.getenv("AGENT_VERBOSE", "True")),
         handle_parsing_errors="Lütfen JSON formatında geçerli bir yanıt ver.",
-        max_iterations=8 # Haber analizi için bir iterasyon daha eklendi
+        max_iterations=8
     )
 except Exception as e:
     logging.critical(f"LLM veya Agent başlatılırken hata oluştu: {e}")
-    exit()
+    sys.exit(1)
 
-# GÜNCELLENDİ: Prompt artık haber verilerini de alıyor ve işliyor
+# --- Prompt Oluşturma Fonksiyonları ---
+
 def create_mta_analysis_prompt(symbol: str, price: float, entry_timeframe: str, entry_indicators: dict, trend_timeframe: str, trend_indicators: dict, market_sentiment: dict, news_data: str) -> str:
     entry_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in entry_indicators.items()])
     trend_indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in trend_indicators.items()])
-    sentiment_text = "\n".join([f"- {key}: {value}" for key, value in market_sentiment.items()])
+    
+    sentiment_text = (
+        f"- Fonlama Oranı: {market_sentiment.get('funding_rate', 'N/A'):.4f}\n"
+        f"- Alış/Satış Oranı: {market_sentiment.get('bid_ask_ratio', 'N/A')}"
+    )
 
-    # GÜNCELLENDİ: Haber analizi kapalıysa prompt'ta ilgili bölümü gösterme
     news_section = f"""
-    ### Temel Analiz (Son Haberler)
-    {news_data}
-    """ if config.USE_NEWS_ANALYSIS else ""
+### Temel Analiz (Son Haberler)
+{news_data}""" if config.USE_NEWS_ANALYSIS else ""
 
     return f"""
-    Sen, teknik, temel (haber) ve duyarlılık analizini birleştiren, piyasanın usta analistisin.
-    Görevin, sana sunulan tüm verileri sentezleyerek kapsamlı bir analiz yapmak ve net bir ticaret kararı ('AL', 'SAT' veya 'BEKLE') vermektir.
+Sen, teknik, temel (haber) ve duyarlılık analizini birleştiren, piyasanın usta analistisin.
+Görevin, sana sunulan tüm verileri, aşağıda belirtilen kurallara göre sentezleyerek kapsamlı bir analiz yapmak ve net bir ticaret kararı ('AL', 'SAT' veya 'BEKLE') vermektir.
 
-    ## ANALİZ KURALLARI (ÖNCELİK SIRASINA GÖRE):
-    1.  **Haberleri Kontrol Et (En Yüksek Öncelik):** Eğer haber verisi sunulduysa, ilk olarak haber başlıklarına bak. Piyasayı olumsuz etkileyebilecek (FUD, hack, regülasyon vb.) net bir haber varsa, diğer tüm göstergeler olumlu olsa bile kararını 'BEKLE' olarak ver.
-    2.  **Piyasa Duyarlılığını Değerlendir:** Fonlama Oranı ve Emir Defteri verilerine bakarak genel piyasa duyarlılığını anla.
-    3.  **Ana Trendi Belirle:** '{trend_timeframe}' zaman aralığındaki verilere bakarak ana trendin yönünü belirle.
-    4.  **Sinyali Teyit Et:** '{entry_timeframe}' zaman aralığındaki giriş sinyalini, önceki adımlardaki tüm verilerle teyit et. Veriler arasında çelişki varsa 'BEKLE'.
-    5.  **Gerekçeni Açıkla:** Kararının arkasındaki mantığı, tüm veri setlerinden bahsederek kısaca açıkla.
+## ANALİZ KURALLARI (ÖNCELİK SIRASINA GÖRE):
+1.  **Haberleri Kontrol Et (En Yüksek Öncelik):** Eğer haber verisi sunulduysa ve piyasayı olumsuz etkileyebilecek (FUD, hack, regülasyon vb.) net bir haber varsa, diğer tüm göstergeler olumlu olsa bile kararını 'BEKLE' olarak ver.
+2.  **Piyasa Duyarlılığını Değerlendir:**
+    - **Fonlama Oranı Kuralı:** Negatif değerler (-0.01 ve altı) aşırı short pozisyonları, pozitif değerler (+0.01 ve üstü) aşırı long pozisyonları gösterir. Yüksek mutlak değerler, potansiyel bir sıkışma (squeeze) ve tersine dönüş sinyali olabilir.
+    - **Emir Defteri Kuralı:** 'Alış/Satış Oranı' değerini yorumla. 1.2'den büyükse net alım baskısı, 0.8'den küçükse net satış baskısı demektir. 0.8 ile 1.2 arasındaki değerler nötr kabul edilir.
+3.  **Ana Trendi Belirle:** '{trend_timeframe}' zaman aralığındaki verilere bakarak ana trendin yönünü belirle. Ana trend ile duyarlılık verileri arasında bir çelişki varsa temkinli ol.
+4.  **Sinyali Teyit Et:** '{entry_timeframe}' zaman aralığındaki giriş sinyalini, önceki adımlardaki tüm verilerle teyit et. Veriler arasında çelişki varsa 'BEKLE'.
+5.  **Gerekçeni Açıkla:** Kararının arkasındaki mantığı, tüm veri setlerinden ve kurallardan bahsederek kısaca açıkla.
 
-    ## SAĞLANAN VERİLER:
-    - Sembol: {symbol}
-    - Anlık Fiyat: {price}
-    {news_section}
-    ### Piyasa Duyarlılığı Verileri
-    {sentiment_text}
-    ### Ana Trend Verileri ({trend_timeframe})
-    {trend_indicator_text}
-    ### Giriş Sinyali Verileri ({entry_timeframe})
-    {entry_indicator_text}
+## SAĞLANAN VERİLER:
+- Sembol: {symbol}
+- Anlık Fiyat: {price}
+{news_section}
+### Piyasa Duyarlılığı Verileri
+{sentiment_text}
+### Ana Trend Verileri ({trend_timeframe})
+{trend_indicator_text}
+### Giriş Sinyali Verileri ({entry_timeframe})
+{entry_indicator_text}
 
-    ## İSTENEN JSON ÇIKTI FORMATI:
-    ```json
-    {{
-      "symbol": "{symbol}",
-      "timeframe": "{entry_timeframe}",
-      "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
-      "reason": "Tüm analizlere dayalı kısa ve net gerekçen.",
-      "analysis_type": "MTA_Sentiment_News",
-      "trend_timeframe": "{trend_timeframe}",
-      "data": {{
-        "price": {price}
-      }}
-    }}
-    ```
-    """
+## İSTENEN JSON ÇIKTI FORMATI:
+```json
+{{
+  "symbol": "{symbol}",
+  "timeframe": "{entry_timeframe}",
+  "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
+  "reason": "Tüm analizlere ve SANA VERİLEN KURALLARA dayanarak yazdığın kısa ve net gerekçen.",
+  "analysis_type": "MTA_Sentiment_News_V2",
+  "trend_timeframe": "{trend_timeframe}",
+  "data": {{
+    "price": {price},
+    "sentiment": {json.dumps(market_sentiment)}
+  }}
+}}
+```
+"""
 
-# GÜNCELLENDİ: Bu prompt da artık haber verilerini işliyor
 def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indicators: dict, market_sentiment: dict, news_data: str) -> str:
     indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in indicators.items()])
-    sentiment_text = "\n".join([f"- {key}: {value}" for key, value in market_sentiment.items()])
+    sentiment_text = (
+        f"- Fonlama Oranı: {market_sentiment.get('funding_rate', 'N/A'):.4f}\n"
+        f"- Alış/Satış Oranı: {market_sentiment.get('bid_ask_ratio', 'N/A')}"
+    )
+    news_section = f"""### Temel Analiz (Son Haberler)\n{news_data}""" if config.USE_NEWS_ANALYSIS else ""
 
     return f"""
-    Sen, uzman bir trading analistisin. Analiz yaparken teknik göstergelerle birlikte temel (haber) ve piyasa duyarlılığı verilerini de dikkate al.
-    Aşağıda sana '{symbol}' adlı kripto para için '{timeframe}' zaman aralığında toplanmış veriler sunulmuştur.
-    
-    GÖREVİN: Önce haberleri kontrol et. Olumsuz bir haber varsa, diğer veriler ne olursa olsun 'BEKLE' de. Haberler nötr veya olumluysa, diğer verileri analiz ederek 'AL', 'SAT' veya 'BEKLE' şeklinde net bir tavsiye kararı ver.
-    Kararını ve gerekçeni, aşağıda formatı verilen JSON çıktısı olarak sun. Başka hiçbir açıklama yapma.
-    
-    SAĞLANAN VERİLER:
-    - Anlık Fiyat: {price}
+Sen, uzman bir trading analistisin. Analiz yaparken sana verilen kurallara uymak zorundasın.
 
-    Temel Analiz (Son Haberler):
-    {news_data}
-    
-    Piyasa Duyarlılığı:
-    {sentiment_text}
-    
-    Teknik Göstergeler:
-    {indicator_text}
-    
-    İSTENEN JSON ÇIKTI FORMATI:
-    ```json
-    {{
-      "symbol": "{symbol}",
-      "timeframe": "{timeframe}",
-      "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
-      "reason": "Kararının kısa ve net gerekçesi (haberleri ve piyasa duyarlılığını da dikkate alarak).",
-      "analysis_type": "Single_Sentiment_News",
-      "data": {{
-        "price": {price}
-      }}
-    }}
-    ```
-    """
+## ANALİZ KURALLARI:
+1.  **Haber Kontrolü:** Olumsuz bir haber varsa, diğer verilere bakmadan 'BEKLE' de.
+2.  **Duyarlılık Analizi:** Fonlama Oranı (-0.01'den küçük veya +0.01'den büyükse) ve Alış/Satış Oranı (0.8'den küçük veya 1.2'den büyükse) piyasa yönü hakkında güçlü ipuçları verir.
+3.  **Teknik Analiz:** Teknik göstergeler arasındaki uyuma bak. RSI veya Stokastik aşırı alım/satım bölgelerindeyse bu bir tersine dönüş sinyali olabilir.
+4.  **Sentez:** Tüm verileri birleştirerek net bir 'AL', 'SAT' veya 'BEKLE' kararı ver ve gerekçeni açıkla.
 
-# GÜNCELLENDİ: Bu prompt da artık ajanı haberleri kontrol etmeye yönlendiriyor
+## SAĞLANAN VERİLER:
+- Sembol: {symbol}, Zaman Aralığı: {timeframe}, Anlık Fiyat: {price}
+{news_section}
+### Piyasa Duyarlılığı
+{sentiment_text}
+### Teknik Göstergeler
+{indicator_text}
+
+## İSTENEN JSON ÇIKTI FORMATI:
+```json
+{{
+  "symbol": "{symbol}",
+  "timeframe": "{timeframe}",
+  "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
+  "reason": "Kurallara ve verilere dayanarak oluşturduğun kısa ve net gerekçen.",
+  "analysis_type": "Single_Sentiment_News_V2",
+  "data": {{
+    "price": {price},
+    "sentiment": {json.dumps(market_sentiment)}
+  }}
+}}
+```
+"""
+
 def create_reanalysis_prompt(position: dict) -> str:
     symbol = position.get("symbol")
     timeframe = position.get("timeframe")
@@ -147,47 +155,48 @@ def create_reanalysis_prompt(position: dict) -> str:
     entry_price = position.get("entry_price")
     
     return f"""
-    Sen, tecrübeli bir pozisyon yöneticisisin.
-    ## Mevcut Pozisyon Bilgileri:
-    - Sembol: {symbol}
-    - Yön: {side}
-    - Giriş Fiyatı: {entry_price}
-    - Analiz Zaman Aralığı: {timeframe}
+Sen, tecrübeli bir pozisyon yöneticisisin ve görev odaklı bir ajansın.
+## Mevcut Pozisyon Bilgileri:
+- Sembol: {symbol}
+- Yön: {side}
+- Giriş Fiyatı: {entry_price}
+- Analiz Zaman Aralığı: {timeframe}
 
-    ## Görevin:
-    Bu pozisyonun mevcut durumunu, en son haberleri, piyasa duyarlılığını ve teknik göstergeleri kullanarak yeniden değerlendir. Ardından, pozisyon için 'TUT' (Hold) veya 'KAPAT' (Close) şeklinde net bir tavsiye ver.
-    Unutma, olumsuz bir haber varsa pozisyonu kapatmak genellikle en güvenli yoldur.
+## Görevin:
+Sırasıyla aşağıdaki araçları kullanarak bu pozisyonun mevcut durumunu yeniden değerlendir:
+1. `get_market_price`: Anlık fiyatı al. Fiyatın giriş fiyatına göre durumunu (kâr/zarar) not et.
+2. `get_technical_indicators`: `{timeframe}` için teknik verileri al ve mevcut trendi yorumla.
+3. `get_funding_rate`: Piyasadaki long/short baskısını anla.
+4. `get_order_book_depth`: Anlık alım/satım baskısını ölç.
+5. `get_latest_news`: Piyasayı etkileyebilecek kritik bir haber olup olmadığını kontrol et.
 
-    ## Nihai Rapor Formatı:
-    Kararını ve gerekçeni içeren bir JSON nesnesi döndür.
-    Örnek: {{"recommendation": "KAPAT", "reason": "Fiyat giriş seviyesinin üzerine çıktı ve RSI aşırı alım sinyali veriyor, ancak olumsuz bir regülasyon haberi çıktı. Riski ortadan kaldırmak için pozisyon kapatılmalı."}}
-    """
+Tüm bu verileri sentezleyerek, pozisyon için 'TUT' (Hold) veya 'KAPAT' (Close) şeklinde net bir tavsiye ver.
+Unutma, olumsuz bir haber varsa veya birden fazla gösterge pozisyonun aleyhine dönmüşse, riski azaltmak için 'KAPAT' demek en güvenli yoldur.
+
+## Nihai Rapor Formatı:
+Kararını ve tüm adımlardan elde ettiğin bulguları içeren gerekçeni bir JSON nesnesi olarak döndür.
+Örnek: {{"recommendation": "KAPAT", "reason": "Fiyat giriş seviyesinin altına düştü. Emir defterinde satış baskısı arttı (oran < 1.0) ve olumsuz bir regülasyon haberi çıktı. Riski ortadan kaldırmak için pozisyon kapatılmalı."}}
+"""
 
 def parse_agent_response(response: str) -> dict | None:
-    if not response or not isinstance(response, str):
-        return None
+    if not response or not isinstance(response, str): return None
     try:
-        if "```json" in response:
-            response = response.split("```json")[1].split("```")[0]
-        elif "```" in response:
-            response = response.split("```")[1].split("```")[0]
+        if "```json" in response: response = response.split("```json")[1].split("```")[0]
+        elif "```" in response: response = response.split("```")[1].split("```")[0]
         return json.loads(response.strip())
     except (json.JSONDecodeError, IndexError):
         logging.error(f"JSON ayrıştırma hatası. Gelen Yanıt: {response}")
         return None
 
+# --- Ana İşlevsel Mantık ---
+
 def check_and_manage_positions():
-    """
-    Tüm açık pozisyonları tek bir API çağrısıyla çeker ve yönetir.
-    Bu yöntem, her pozisyon için ayrı fiyat sorgusu yapmaktan daha verimli ve güvenilirdir.
-    """
+    """Tüm açık pozisyonları tek bir API çağrısıyla çeker ve yönetir."""
     exchange_positions_raw = get_open_positions_from_exchange.invoke({})
     if not isinstance(exchange_positions_raw, list):
-        logging.error(f"Borsadan pozisyonlar alınamadı, dönen veri: {exchange_positions_raw}")
-        return
+        logging.error(f"Borsadan pozisyonlar alınamadı, dönen veri: {exchange_positions_raw}"); return
         
     exchange_positions_map = {_get_unified_symbol(p.get('symbol')): p for p in exchange_positions_raw}
-    
     db_positions = database.get_all_positions()
     db_positions_map = {p['symbol']: p for p in db_positions}
 
@@ -200,16 +209,8 @@ def check_and_manage_positions():
             continue
 
         try:
-            current_price_str = exchange_pos.get('markPrice')
-            if not current_price_str:
-                logging.warning(f"'{symbol}' için pozisyon verisinden 'markPrice' alınamadı, atlanıyor.")
-                continue
-            
-            current_price = float(current_price_str)
-            
-            side = db_pos.get("side")
-            sl_price = db_pos.get("stop_loss", 0.0)
-            tp_price = db_pos.get("take_profit", 0.0)
+            current_price = float(exchange_pos.get('markPrice'))
+            side, sl_price, tp_price = db_pos.get("side"), db_pos.get("stop_loss", 0.0), db_pos.get("take_profit", 0.0)
             
             close_reason = None
             if sl_price > 0 and ( (side == "buy" and current_price <= sl_price) or (side == "sell" and current_price >= sl_price) ):
@@ -224,9 +225,7 @@ def check_and_manage_positions():
                 continue
 
             if config.USE_PARTIAL_TP and not db_pos.get('partial_tp_executed'):
-                initial_sl = db_pos.get('initial_stop_loss')
-                entry_price = db_pos.get('entry_price')
-                
+                initial_sl, entry_price = db_pos.get('initial_stop_loss'), db_pos.get('entry_price')
                 if initial_sl and entry_price:
                     risk_distance = abs(entry_price - initial_sl)
                     partial_tp_price = entry_price + (risk_distance * config.PARTIAL_TP_TARGET_RR) if side == 'buy' else entry_price - (risk_distance * config.PARTIAL_TP_TARGET_RR)
@@ -239,15 +238,27 @@ def check_and_manage_positions():
                         remaining_amount = db_pos['amount'] - amount_to_close
                         
                         if remaining_amount > 0:
-                            close_side = 'sell' if side == 'buy' else 'buy'
-                            result_str = execute_trade_order.invoke({"symbol": symbol, "side": close_side, "amount": amount_to_close})
+                            partial_pnl = calculate_pnl(side, entry_price, partial_tp_price, amount_to_close)
+                            result_str = execute_trade_order.invoke({"symbol": symbol, "side": ('sell' if side == 'buy' else 'buy'), "amount": amount_to_close})
                             
                             if "başarı" in result_str.lower() or "simülasyon" in result_str.lower():
-                                logging.info(f"Kısmi kâr alma başarılı: {amount_to_close:.4f} {symbol} kapatıldı.")
+                                logging.info(f"Kısmi kâr alma başarılı: {amount_to_close:.4f} {symbol} kapatıldı. Realize edilen PNL: {partial_pnl:.2f} USDT")
+                                
+                                logging.info(f"Kısmi TP sonrası eski emirler temizleniyor: {symbol}")
+                                cancel_all_open_orders.invoke(symbol)
+                                time.sleep(1) 
+
                                 new_sl_price = entry_price
-                                sl_update_result = update_stop_loss_order.invoke({"symbol": symbol, "side": side, "amount": remaining_amount, "new_stop_price": new_sl_price})
-                                logging.info(f"Kalan pozisyon için SL girişe çekildi: {sl_update_result}")
-                                database.update_position_after_partial_tp(symbol, remaining_amount, new_sl_price)
+                                try:
+                                    if config.LIVE_TRADING:
+                                        exchange.create_order(symbol, 'STOP_MARKET', ('sell' if side == 'buy' else 'buy'), remaining_amount, None, {'stopPrice': new_sl_price, 'reduceOnly': True})
+                                    logging.info(f"Başarılı: Kalan pozisyon için yeni SL emri {new_sl_price} olarak oluşturuldu.")
+                                except Exception as e:
+                                    logging.error(f"Kısmi TP sonrası yeni SL emri oluşturulurken HATA: {e}", exc_info=True)
+
+                                total_realized_pnl = db_pos.get('realized_pnl', 0.0) + partial_pnl
+                                database.update_position_after_partial_tp(symbol, remaining_amount, new_sl_price, total_realized_pnl)
+                                
                                 message = format_partial_tp_message(symbol, amount_to_close, remaining_amount, entry_price)
                                 send_telegram_message(message)
                                 continue
@@ -255,28 +266,26 @@ def check_and_manage_positions():
                                 logging.error(f"Kısmi kâr alma sırasında pozisyon kapatılamadı: {result_str}")
 
             if config.USE_TRAILING_STOP_LOSS:
-                entry_price = db_pos.get("entry_price", 0.0)
-                initial_sl = db_pos.get('initial_stop_loss')
+                entry_price, initial_sl = db_pos.get("entry_price", 0.0), db_pos.get('initial_stop_loss')
                 if not initial_sl: continue
-                
                 profit_perc = ((current_price - entry_price) / entry_price) * 100 * (1 if side == 'buy' else -1)
                 
                 if profit_perc > config.TRAILING_STOP_ACTIVATION_PERCENT:
                     original_sl_distance = abs(entry_price - initial_sl)
-                    new_sl = 0.0
-                    if side == 'buy' and (new_sl_candidate := current_price - original_sl_distance) > sl_price:
-                        new_sl = new_sl_candidate
-                    elif side == 'sell' and (new_sl_candidate := current_price + original_sl_distance) < sl_price:
-                        new_sl = new_sl_candidate
-
-                    if new_sl > 0:
-                        logging.info(f"[TRAIL-SL] {symbol} için yeni SL tetiklendi: {sl_price:.4f} -> {new_sl:.4f}")
-                        result = update_stop_loss_order.invoke({"symbol": symbol, "side": side, "amount": db_pos['amount'], "new_stop_price": new_sl})
-                        if "Başarılı" in result or "Simülasyon" in result:
-                            database.update_position_sl(symbol, new_sl)
+                    new_sl_candidate = current_price - original_sl_distance if side == 'buy' else current_price + original_sl_distance
+                    if (side == 'buy' and new_sl_candidate > sl_price) or (side == 'sell' and new_sl_candidate < sl_price):
+                        logging.info(f"[TRAIL-SL] {symbol} için yeni SL tetiklendi: {sl_price:.4f} -> {new_sl_candidate:.4f}")
+                        opposite_side = 'sell' if side == 'buy' else 'buy'
+                        try:
+                            cancel_all_open_orders.invoke(symbol)
+                            time.sleep(1)
+                            if config.LIVE_TRADING:
+                                exchange.create_order(symbol, 'STOP_MARKET', opposite_side, db_pos['amount'], None, {'stopPrice': new_sl_candidate, 'reduceOnly': True})
+                            database.update_position_sl(symbol, new_sl_candidate)
+                        except Exception as e:
+                            logging.error(f"Trailing SL güncellenirken hata: {e}")
         except Exception as e:
             logging.error(f"Pozisyon kontrolü sırasında hata: {e} - Pozisyon: {db_pos}", exc_info=True)
-
 
 def background_position_checker():
     logging.info("--- Arka plan pozisyon kontrolcüsü başlatıldı. ---")
@@ -307,8 +316,8 @@ def handle_trade_confirmation(recommendation, trade_symbol, current_price, timef
             atr_result = get_atr_value.invoke({"symbol_and_timeframe": f"{trade_symbol},{timeframe}"})
             if atr_result.get("status") != "success":
                 print(f"### HATA: ATR değeri alınamadı: {atr_result.get('message')} ###"); return
-            
             atr_value = atr_result['value']
+
             sl_distance = atr_value * config.ATR_MULTIPLIER_SL
             stop_loss_price = current_price - sl_distance if trade_side == "buy" else current_price + sl_distance
 
@@ -375,7 +384,7 @@ def sync_and_display_positions():
                 pnl_info = "| PNL Hesaplanamadı"
                 current_price = _fetch_price_natively(pos['symbol'])
                 if current_price is not None:
-                    entry_price = pos.get('entry_price', 0); amount = pos.get('amount', 0); side = pos.get('side', 'buy')
+                    entry_price, amount, side = pos.get('entry_price', 0), pos.get('amount', 0), pos.get('side', 'buy')
                     pnl = calculate_pnl(side, entry_price, current_price, amount)
                     margin = (entry_price * amount) / pos.get('leverage', 1) if pos.get('leverage', 1) > 0 else 0
                     pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
@@ -435,8 +444,40 @@ def sync_and_display_positions():
     except Exception as e:
         logging.error(f"Senkronizasyon sırasında hata oluştu: {e}", exc_info=True)
 
+def get_status_as_string() -> str:
+    """Pozisyonları düz metin yerine Telegram'a uygun bir string olarak döndürür."""
+    try:
+        exchange_positions_raw = get_open_positions_from_exchange.invoke({})
+        if not isinstance(exchange_positions_raw, list) or not exchange_positions_raw:
+            return "Borsada açık pozisyon bulunmuyor."
 
-# GÜNCELLENDİ: Fonksiyon artık haberleri de çekiyor ve prompt'a gönderiyor
+        db_positions = database.get_all_positions()
+        managed_symbols = {p['symbol'] for p in db_positions}
+        output_lines = [f"<b>Borsada Bulunan Açık Pozisyonlar: {len(exchange_positions_raw)}</b>\n"]
+
+        for pos_data in exchange_positions_raw:
+            symbol = _get_unified_symbol(pos_data.get('symbol'))
+            side = 'BUY' if pos_data.get('side', 'long') == 'long' else 'SELL'
+            notional = float(pos_data.get('notional', 0.0) or 0.0)
+            entry_price = float(pos_data.get('entryPrice', 0.0) or 0.0)
+            pnl = float(pos_data.get('unrealizedPnl', 0.0) or 0.0)
+            margin = float(pos_data.get('initialMargin', 0.0) or 0.0)
+            pnl_percentage = (pnl / margin) * 100 if margin > 0 else 0
+            pnl_emoji = "⬆️" if pnl >= 0 else "⬇️"
+            managed_emoji = "✅" if symbol in managed_symbols else "❌"
+
+            line = (
+                f"\n<b>{managed_emoji} {symbol} ({side})</b>\n"
+                f"  Büyüklük: {notional:.2f} USDT\n"
+                f"  Giriş: {entry_price:.4f}\n"
+                f"  PNL: {pnl:+.2f} USDT ({pnl_percentage:+.2f}%) {pnl_emoji}"
+            )
+            output_lines.append(line)
+        return "\n".join(output_lines)
+    except Exception as e:
+        logging.error(f"Telegram status alınırken hata oluştu: {e}", exc_info=True)
+        return f"Pozisyon durumu alınırken bir hata oluştu: {e}"
+
 def _perform_analysis(symbol: str, entry_tf: str, use_mta: bool, trend_tf: str = None) -> dict | None:
     unified_symbol = _get_unified_symbol(symbol)
     logging.info(f"Analiz başlatılıyor: {unified_symbol} ({'MTA' if use_mta else 'Single'})")
@@ -444,27 +485,23 @@ def _perform_analysis(symbol: str, entry_tf: str, use_mta: bool, trend_tf: str =
     try:
         current_price = _fetch_price_natively(unified_symbol)
         if not current_price:
-            logging.error(f"Fiyat alınamadı: {unified_symbol}")
-            return None
+            logging.error(f"Fiyat alınamadı: {unified_symbol}"); return None
 
-        # Teknik Veriler
         entry_indicators_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{unified_symbol},{entry_tf}"})
         if entry_indicators_result.get("status") != "success":
-            logging.error(f"{unified_symbol} ({entry_tf}) için teknik veri alınamadı: {entry_indicators_result.get('message')}")
-            return None
+            logging.error(f"{unified_symbol} ({entry_tf}) için teknik veri alınamadı: {entry_indicators_result.get('message')}"); return None
         entry_indicators_data = entry_indicators_result["data"]
         
-        # Duyarlılık Verileri
         market_sentiment_data = {}
         if config.DEFAULT_MARKET_TYPE == 'future':
-            funding_rate_str = get_funding_rate.invoke(unified_symbol)
-            order_book_str = get_order_book_depth.invoke(unified_symbol)
-            market_sentiment_data = {
-                "Fonlama Bilgisi": funding_rate_str,
-                "Emir Defteri Bilgisi": order_book_str
-            }
+            funding_rate_result = get_funding_rate.invoke(unified_symbol)
+            if funding_rate_result.get("status") == "success":
+                market_sentiment_data['funding_rate'] = funding_rate_result.get('funding_rate')
+            
+            order_book_result = get_order_book_depth.invoke(unified_symbol)
+            if order_book_result.get("status") == "success":
+                market_sentiment_data['bid_ask_ratio'] = order_book_result.get('bid_ask_ratio')
 
-        # YENİ: Haber verileri sadece ayar aktif ise çekiliyor
         news_data_str = "Haber analizi kapalı."
         if config.USE_NEWS_ANALYSIS:
             logging.info(f"{unified_symbol} için son haberler çekiliyor...")
@@ -474,14 +511,10 @@ def _perform_analysis(symbol: str, entry_tf: str, use_mta: bool, trend_tf: str =
         if use_mta and trend_tf:
             trend_indicators_result = get_technical_indicators.invoke({"symbol_and_timeframe": f"{unified_symbol},{trend_tf}"})
             if trend_indicators_result.get("status") != "success":
-                logging.error(f"{unified_symbol} ({trend_tf}) için trend verisi alınamadı: {trend_indicators_result.get('message')}")
-                return None
+                logging.error(f"{unified_symbol} ({trend_tf}) için trend verisi alınamadı: {trend_indicators_result.get('message')}"); return None
             trend_indicators_data = trend_indicators_result["data"]
-            # Not: create_mta_analysis_prompt'un yeni 'news_data_str' argümanını alması gerekiyor
             final_prompt = create_mta_analysis_prompt(unified_symbol, current_price, entry_tf, entry_indicators_data, trend_tf, trend_indicators_data, market_sentiment_data, news_data_str)
         else:
-            # Not: create_final_analysis_prompt'un da güncellenmesi gerekir
-            # Şimdilik MTA odaklı devam ediyoruz
             final_prompt = create_final_analysis_prompt(unified_symbol, entry_tf, current_price, entry_indicators_data, market_sentiment_data, news_data_str)
 
         logging.info(f"Yapay zeka analizi için {unified_symbol} gönderiliyor...")
@@ -489,8 +522,7 @@ def _perform_analysis(symbol: str, entry_tf: str, use_mta: bool, trend_tf: str =
         parsed_data = parse_agent_response(result.content)
 
         if not parsed_data:
-            logging.error(f"Yapay zekadan {unified_symbol} için geçerli yanıt alınamadı. Yanıt: {result.content}")
-            return None
+            logging.error(f"Yapay zekadan {unified_symbol} için geçerli yanıt alınamadı. Yanıt: {result.content}"); return None
         
         parsed_data['current_price'] = current_price
         return parsed_data
@@ -498,45 +530,6 @@ def _perform_analysis(symbol: str, entry_tf: str, use_mta: bool, trend_tf: str =
     except Exception as e:
         logging.critical(f"Analiz sırasında kritik hata ({unified_symbol}): {e}", exc_info=True)
         return None
-
-def create_final_analysis_prompt(symbol: str, timeframe: str, price: float, indicators: dict, market_sentiment: dict, news_data: str) -> str:
-    indicator_text = "\n".join([f"- {key}: {value:.4f}" for key, value in indicators.items()])
-    sentiment_text = "\n".join([f"- {key}: {value}" for key, value in market_sentiment.items()])
-    news_section = f"""
-    Temel Analiz (Son Haberler):
-    {news_data}
-    """ if config.USE_NEWS_ANALYSIS else ""
-
-    return f"""
-    Sen, uzman bir trading analistisin. Analiz yaparken teknik göstergelerle birlikte temel (haber) ve piyasa duyarlılığı verilerini de dikkate al.
-    Aşağıda sana '{symbol}' adlı kripto para için '{timeframe}' zaman aralığında toplanmış veriler sunulmuştur.
-    
-    GÖREVİN: Önce haberleri kontrol et (eğer sunulduysa). Olumsuz bir haber varsa, diğer veriler ne olursa olsun 'BEKLE' de. Haberler nötr veya olumluysa, diğer verileri analiz ederek 'AL', 'SAT' veya 'BEKLE' şeklinde net bir tavsiye kararı ver.
-    Kararını ve gerekçeni, aşağıda formatı verilen JSON çıktısı olarak sun. Başka hiçbir açıklama yapma.
-    
-    SAĞLANAN VERİLER:
-    - Anlık Fiyat: {price}
-    {news_section}
-    Piyasa Duyarlılığı:
-    {sentiment_text}
-    
-    Teknik Göstergeler:
-    {indicator_text}
-    
-    İSTENEN JSON ÇIKTI FORMATI:
-    ```json
-    {{
-      "symbol": "{symbol}",
-      "timeframe": "{timeframe}",
-      "recommendation": "KARARIN (AL, SAT, veya BEKLE)",
-      "reason": "Kararının kısa ve net gerekçesi (haberleri ve piyasa duyarlılığını da dikkate alarak).",
-      "analysis_type": "Single_Sentiment_News",
-      "data": {{
-        "price": {price}
-      }}
-    }}
-    ```
-    """
 
 def _execute_single_scan_cycle():
     logging.info("--- 🚀 Yeni Proaktif Tarama Döngüsü Başlatılıyor 🚀 ---")
@@ -689,7 +682,9 @@ def handle_manage_position():
             print("3. Ana Menüye Dön")
             action_choice = input("Seçiminiz: ")
             if action_choice == '1':
-                handle_manual_close(position_to_manage); break 
+                close_result = handle_manual_close(position_to_manage)
+                print(close_result)
+                break 
             elif action_choice == '2':
                 handle_reanalyze_position(position_to_manage); break
             elif action_choice == '3': break
@@ -697,66 +692,96 @@ def handle_manage_position():
     except (ValueError, IndexError):
         print("Geçersiz giriş.")
 
-def handle_manual_close(position, from_auto=False, close_reason="MANUAL"):
-    """Bir pozisyonu manuel veya otomatik olarak kapatır ve ilişkili emirleri temizler."""
+def handle_manual_close(position: dict, from_auto: bool = False, close_reason: str = "MANUAL", send_notification: bool = True) -> str:
+    """Bir pozisyonu manuel veya otomatik olarak kapatır ve bir sonuç mesajı döndürür."""
     if not from_auto:
         print(f"UYARI: {position['symbol']} pozisyonunu manuel olarak kapatacaksınız.")
         onay = input("Emin misiniz? (evet/hayır): ").lower()
         if onay != 'evet':
-            print("İşlem iptal edildi."); return
+            return "İşlem iptal edildi."
     
-    logging.info(f"Kapatılacak pozisyon ({position['symbol']}) için mevcut emirler iptal ediliyor...")
-    cancel_all_open_orders.invoke(position['symbol'])
+    symbol = position['symbol']
+    logging.info(f"Kapatılacak pozisyon ({symbol}) için mevcut emirler iptal ediliyor...")
+    cancel_all_open_orders.invoke(symbol)
     time.sleep(1) 
 
     close_side = 'sell' if position['side'] == 'buy' else 'buy'
     result = execute_trade_order.invoke({
-        "symbol": position['symbol'], "side": close_side, "amount": position['amount']
+        "symbol": symbol, "side": close_side, "amount": position['amount']
     })
-    print(f"Kapatma Sonucu: {result}")
     
     if "başarı" in result.lower() or "simülasyon" in result.lower():
-        closed_pos = database.remove_position(position['symbol'])
+        closed_pos = database.remove_position(symbol)
         if closed_pos:
             current_price = position.get('close_price') or _fetch_price_natively(closed_pos['symbol']) or closed_pos['entry_price']
             
             pnl = calculate_pnl(side=closed_pos.get('side'), entry_price=closed_pos.get('entry_price'), close_price=current_price, amount=closed_pos.get('amount'))
+            closed_pos['close_price'] = current_price
 
             database.log_trade_to_history(closed_pos, current_price, close_reason)
-            message = format_close_position_message(closed_pos, pnl, close_reason)
-            send_telegram_message(message)
-        print(f"+++ POZİSYON BAŞARIYLA KAPATILDI: {position['symbol']} +++")
+            if send_notification:
+                message = format_close_position_message(closed_pos, pnl, close_reason)
+                send_telegram_message(message)
+        
+        logging.info(f"POZİSYON BAŞARIYLA KAPATILDI: {symbol}")
+        return f"✅ `{symbol}` pozisyonu `{close_reason}` nedeniyle başarıyla kapatıldı."
     else:
-        logging.error(f"Pozisyon kapatılamadı: {position['symbol']}. Sonuç: {result}")
+        logging.error(f"Pozisyon kapatılamadı: {symbol}. Sonuç: {result}")
+        return f"❌ `{symbol}` pozisyonu kapatılamadı. Sonuç: {result}"
 
-def handle_reanalyze_position(position):
-    print(f"\n--- {position['symbol']} Pozisyonu Yeniden Analiz Ediliyor... ---")
+def _get_reanalysis_report(position: dict) -> str:
+    """Bir pozisyon için yeniden analiz yapar ve sonucu metin olarak döndürür."""
     reanalysis_prompt = create_reanalysis_prompt(position)
-    
     try:
         result = agent_executor.invoke({"input": reanalysis_prompt})
         parsed_data = parse_agent_response(result.get("output", ""))
 
         if not parsed_data or "recommendation" not in parsed_data:
-            print("\n--- HATA: Yeniden analiz sırasında Agent'tan geçerli bir tavsiye alınamadı. ---")
-            print(f"Gelen yanıt: {result.get('output', '')}")
-            return
+            return f"❌ HATA: Ajan, `{position['symbol']}` için yeniden analiz sırasında geçerli bir tavsiye üretemedi."
+
+        recommendation = parsed_data.get('recommendation')
+        reason = parsed_data.get('reason', 'Gerekçe belirtilmedi.')
         
-        print("\n--- Yeniden Analiz Raporu ---")
-        print(f"Tavsiye: {parsed_data.get('recommendation')}")
-        print(f"Gerekçe: {parsed_data.get('reason')}")
+        report = (
+            f"<b>📊 Yeniden Analiz Raporu [{position['symbol']}]</b>\n\n"
+            f"<b>Tavsiye:</b> {recommendation}\n"
+            f"<b>Gerekçe:</b> {reason}"
+        )
+        if recommendation == 'KAPAT':
+            report += "\n\n⚠️ AJAN 'KAPAT' TAVSİYESİ VERDİ!"
+        
+        # Ajanın tavsiyesini de içeren tam veriyi döndürelim
+        return json.dumps({
+            "report_text": report,
+            "recommendation": recommendation,
+            "position": position
+        })
 
-        if parsed_data.get('recommendation') == 'KAPAT':
-            print("\nAJAN 'KAPAT' TAVSİYESİ VERDİ. POZİSYON KAPATILIYOR...")
-            position['close_price'] = _fetch_price_natively(position['symbol'])
-            handle_manual_close(position, close_reason="AGENT_CLOSE") 
-        else:
-            print("\nAJAN 'TUT' TAVSİYESİ VERDİ. POZİSYON AÇIK KALIYOR.")
-            
     except Exception as e:
-        print(f"\n--- KRİTİK HATA: Yeniden analiz sırasında bir sorun oluştu. ---")
         logging.error(f"handle_reanalyze_position hatası: {e}", exc_info=True)
+        return json.dumps({
+            "report_text": f"❌ KRİTİK HATA: `{position['symbol']}` yeniden analiz edilirken bir sorun oluştu: {e}",
+            "recommendation": "HATA"
+        })
+    
+def handle_reanalyze_position(position):
+    print(f"\n--- {position['symbol']} Pozisyonu Yeniden Analiz Ediliyor... ---")
+    
+    report_json_str = _get_reanalysis_report(position)
+    report_data = json.loads(report_json_str)
 
+    # HTML'i temizleyerek konsolda göster
+    report_text_for_console = report_data.get('report_text', '').replace('<b>', '').replace('</b>', '').replace('<i>', '').replace('</i>', '')
+    print(report_text_for_console)
+    
+    recommendation = report_data.get('recommendation')
+    if recommendation == 'KAPAT':
+        print("\nAJAN 'KAPAT' TAVSİYESİ VERDİ. POZİSYON KAPATILIYOR...")
+        close_result = handle_manual_close(position, from_auto=True, close_reason="AGENT_CLOSE") 
+        print(close_result)
+    elif recommendation != "HATA":
+        print("\nAJAN 'TUT' TAVSİYESİ VERDİ. POZİSYON AÇIK KALIYOR.")
+            
 def launch_dashboard():
     """Web arayüzü sunucusunu ayrı bir işlem olarak başlatır."""
     dashboard_script = os.path.join('dashboard', 'app.py')
@@ -767,14 +792,14 @@ def launch_dashboard():
     print("\n--- 📈 Web Arayüzü Başlatılıyor... ---")
     try:
         subprocess.Popen([sys.executable, dashboard_script])
-        print("✅ Sunucu başlatıldı. http://127.0.0.1:5001 adresini tarayıcıda açın.")
+        print("✅ Sunucu başlatıldı. [http://127.0.0.1:5001](http://127.0.0.1:5001) adresini tarayıcıda açın.")
     except Exception as e:
         print(f"❌ Web arayüzü başlatılamadı: {e}")
 
 def main():
     database.init_db()
     initialize_exchange(config.DEFAULT_MARKET_TYPE)
-    
+
     print("\n" + "="*50)
     print(f"           GEMINI TRADING AGENT BAŞLATILDI")
     print(f"                 Versiyon: {config.APP_VERSION}")
@@ -784,9 +809,20 @@ def main():
         print("DİKKAT: Bot, Binance hesabınızda gerçek para ile işlem yapacaktır!")
     print(f"BİLDİRİMLER: Telegram {'✅ AKTİF ✅' if config.TELEGRAM_ENABLED else '❌ KAPALI ❌'}.")
     print("="*50 + "\n")
-    
+
     checker_thread = threading.Thread(target=background_position_checker, daemon=True)
     checker_thread.start()
+
+    if config.TELEGRAM_ENABLED:
+        bot_actions = {
+            'analyze': _perform_analysis,
+            'scan': _execute_single_scan_cycle,
+            'reanalyze': _get_reanalysis_report,
+            'close': handle_manual_close,
+            'get_status': get_status_as_string
+        }
+        telegram_thread = threading.Thread(target=run_telegram_bot, args=(bot_actions,), daemon=True)
+        telegram_thread.start()
     
     menu_options = {
         "1": ("Pozisyonları Göster ve Senkronize Et", sync_and_display_positions),
@@ -794,7 +830,7 @@ def main():
         "3": ("Açık Pozisyonu Yönet", handle_manage_position),
         "p": ("PROAKTİF TARAMAYI BAŞLAT (Fırsat Avcısı)", run_proactive_scanner),
         "d": ("WEB ARAYÜZÜNÜ BAŞLAT (Dashboard)", launch_dashboard),
-        "4": ("Çıkış", lambda: print("Bot kapatılıyor..."))
+        "q": ("Çıkış", lambda: print("Bot kapatılıyor..."))
     }
     
     while True:
@@ -807,7 +843,7 @@ def main():
 
         choice = input("Seçiminiz: ").lower().strip()
         
-        if choice == "4":
+        if choice == "q":
             menu_options[choice][1]()
             break
 

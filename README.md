@@ -1,6 +1,6 @@
-# Gemini Trading Agent v1.7.0
+# Gemini Trading Agent v1.8.0
 
-![Versiyon](https://img.shields.io/badge/versiyon-1.7.0-brightgreen) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet) ![Status](https://img.shields.io/badge/status-stabil-green)
+![Versiyon](https://img.shields.io/badge/versiyon-1.8.0-blue) ![Python](https://img.shields.io/badge/Python-3.10%2B-blueviolet) ![Status](https://img.shields.io/badge/status-stabil-green)
 
 Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü kullanarak kripto para piyasalarında işlem yapan, çok yönlü bir trading botu. Bu bot; teknik, duyarlılık ve temel analiz yeteneklerini birleştirerek piyasaları bütünsel bir yaklaşımla değerlendirir. Gelişmiş risk yönetimi ve kalıcı veritabanı mimarisine sahiptir.
 
@@ -15,6 +15,10 @@ Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü k
     - **ATR Tabanlı SL/TP:** Piyasa volatilitesine göre Stop-Loss ve Take-Profit seviyelerini dinamik olarak belirler.
     - **İz Süren Zarar Durdur (Trailing Stop-Loss):** Kâra geçen pozisyonlarda kârı kilitlemek için stop-loss seviyesini otomatik olarak ayarlar.
     - **Kısmi Kâr Alma (Partial Take-Profit):** 1R hedefine ulaşıldığında pozisyonun bir kısmını kapatarak kârı realize eder ve riski sıfırlar.
+- **İnteraktif Telegram Kontrolü:**
+    - **Detaylı Durum Raporu:** `/status` komutu ile borsadaki ve bot tarafından yönetilen tüm pozisyonların anlık PNL durumunu görme.
+    - **Uzaktan Analiz ve Tarama:** `/analiz` ve `/tara` komutları ile botun analiz ve fırsat avcısı modüllerini tetikleme.
+    - **Pozisyon Yönetimi:** `/pozisyonlar` komutu ile aktif pozisyonları listeleme, yeniden analiz etme ve **doğrudan Telegram üzerinden pozisyon kapatma**.
 - **Kalıcı ve Sağlam Veritabanı Mimarisi:**
     - **SQLite Entegrasyonu:** Anlık pozisyonları ve tüm işlem geçmişini, yeniden başlatmalarda kaybolmayan sağlam bir SQLite veritabanında saklar.
     - **İşlem Geçmişi:** Kapanan her işlemin PNL ve kapanış durumu gibi detaylarını gelecekteki analizler için kaydeder.
@@ -32,8 +36,8 @@ Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü k
 - **Google Gemini API:** Analiz ve karar verme süreçleri için.
 - **CCXT:** Binance ve diğer borsalarla standartlaştırılmış iletişim için.
 - **Pandas & Pandas-TA:** Finansal verileri işlemek ve teknik analiz göstergelerini hesaplamak için.
+- **python-telegram-bot v22+:** Asenkron Telegram botu işlevselliği için.
 - **SQLite3:** Pozisyon ve işlem geçmişi verilerini saklamak için.
-- **Requests:** API istekleri için.
 - **Flask:** Web arayüzü için.
 - **Dotenv:** API anahtarları gibi hassas bilgileri güvenli bir şekilde yönetmek için.
 
@@ -56,7 +60,7 @@ Google'ın güçlü Gemini yapay zeka modellerini ve LangChain framework'ünü k
     GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
     BINANCE_API_KEY="YOUR_BINANCE_API_KEY"
     BINANCE_SECRET_KEY="YOUR_BINANCE_SECRET_KEY"
-    CRYPTOPANIC_API_KEY="YOUR_CRYPTOPANIC_API_KEY"  # Haber analizi için bu anahtarı ekleyin
+    CRYPTOPANIC_API_KEY="YOUR_CRYPTOPANIC_API_KEY"
     
     TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
     TELEGRAM_CHAT_ID="YOUR_TELEGRAM_CHAT_ID"

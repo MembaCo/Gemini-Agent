@@ -1,0 +1,33 @@
+# @author: Memba Co.
+version: "3.8"
+
+services:
+  gemini-trading-agent:
+    # İmajı, aynı dizindeki Dockerfile'dan oluştur
+    build: .
+    # Konteyner ismini belirle
+    container_name: gemini-trading-agent
+    # Konteyner durdurulmadığı sürece (hata alsa veya sistem yeniden başlasa bile) otomatik olarak yeniden başlat
+    restart: unless-stopped
+    # Konteynere durması için 1 dakika süre tanı
+    stop_grace_period: 1m
+    volumes:
+      # Veritabanı dosyasını kalıcı hale getir. 
+      # Konteyner silinse bile işlem geçmişi kaybolmaz.
+      - ${APP_DATA_DIR}/data/db:/app/trades.db
+    ports:
+      # Dashboard'un çalıştığı portu Umbrel ağına aç
+      - "5001:5001"
+    environment:
+      # Bu değişkenler umbrel-app.yml dosyasından alınacak ve Umbrel UI üzerinden kullanıcı tarafından girilecektir.
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - USE_TESTNET=${USE_TESTNET}
+      - AGENT_VERBOSE=${AGENT_VERBOSE}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}

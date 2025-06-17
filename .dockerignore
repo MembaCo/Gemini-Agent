@@ -1,0 +1,38 @@
+# Git dosyalarını ve dizinlerini yoksay
+.git
+.gitignore
+.dockerignore
+
+# IDE ve proje ayar dosyalarını yoksay
+.vscode/
+.idea/
+*.code-workspace
+
+# Python cache dosyalarını yoksay
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Hassas bilgileri içeren .env dosyasını yoksay
+# Bu bilgiler docker-compose.yml üzerinden sağlanacak
+.env
+.env.example
+
+# Derleme ve paketleme çıktılarını yoksay
+build/
+dist/
+*.spec
+venv/
+env/
+
+# Yerel veritabanı ve log dosyalarını yoksay
+# Kalıcı veriler volume ile yönetilecek
+*.db
+*.db-journal
+*.log
+
+# Projeye özel diğer klasörler
+/notes
+/Sinyal
+/str
