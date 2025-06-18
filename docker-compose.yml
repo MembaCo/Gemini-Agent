@@ -12,11 +12,12 @@ services:
     # Konteynere durması için 1 dakika süre tanı
     stop_grace_period: 1m
     volumes:
-      # Veritabanı dosyasını kalıcı hale getir. 
-      # Konteyner silinse bile işlem geçmişi kaybolmaz.
-      - ${APP_DATA_DIR}/data/db:/app/trades.db
+      # DÜZELTME: Veritabanı dosyasını kalıcı hale getir. 
+      # Bir host dosyasını, bir konteyner dosyasına bağlıyoruz. Bu, veritabanının kaybolmamasını sağlar.
+      # ${APP_DATA_DIR}, Umbrel tarafından sağlanacak olan uygulama veri dizinidir.
+      - ${APP_DATA_DIR}/data/trades.db:/app/trades.db
     ports:
-      # Dashboard'un çalıştığı portu Umbrel ağına aç
+      # Dashboard'un çalıştığı portu ana makineye (host) bağla
       - "5001:5001"
     environment:
       # Bu değişkenler umbrel-app.yml dosyasından alınacak ve Umbrel UI üzerinden kullanıcı tarafından girilecektir.
@@ -26,6 +27,7 @@ services:
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD} # EKLENDİ: Web arayüzü şifresi eklendi.
       - USE_TESTNET=${USE_TESTNET}
       - AGENT_VERBOSE=${AGENT_VERBOSE}
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
