@@ -1,158 +1,108 @@
 <!DOCTYPE html>
-<html lang="tr" class="dark">
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gemini Trading Agent - Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { background-color: #111827; color: #d1d5db; font-family: 'Inter', sans-serif; }
-        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #374151; }
-        th { background-color: #1f2937; font-weight: 600; }
-        .text-success { color: #22c55e; }
-        .text-danger { color: #ef4444; }
-        .stat-card { background-color: #1f2937; border-radius: 0.75rem; padding: 1.5rem; border: 1px solid #374151; }
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #cbd5e1; }
+        .card { background-color: #1e293b; border-radius: 0.75rem; border: 1px solid #334155; padding: 1.5rem; }
+        .table-header { background-color: #334155; }
+        .positive-pnl { color: #22c55e; }
+        .negative-pnl { color: #ef4444; }
+        .info-text { color: #facc15; }
+        .btn { padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-red { background-color: #be123c; color: white; }
+        .btn-red:hover:not(:disabled) { background-color: #9f1239; }
+        .btn-blue { background-color: #2563eb; color: white; }
+        .btn-blue:hover:not(:disabled) { background-color: #1d4ed8; }
+        .btn-green { background-color: #16a34a; color: white; }
+        .btn-green:hover:not(:disabled) { background-color: #15803d; }
+        .btn-gray { background-color: #475569; color: white; }
+        .btn-gray:hover:not(:disabled) { background-color: #334155; }
+        .toast { position: fixed; top: 1.5rem; right: 1.5rem; padding: 1rem 1.5rem; border-radius: 0.5rem; color: white; z-index: 50; opacity: 0; transition: opacity 0.5s, transform 0.5s; transform: translateY(-20px); }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast-success { background-color: #16a34a; }
+        .toast-error { background-color: #dc2626; }
+        .toast-info { background-color: #d97706; }
+        .modal { transition: opacity 0.25s ease; }
+        .modal-content { transition: transform 0.25s ease; }
     </style>
 </head>
-<body class="p-4 sm:p-6 lg:p-8">
+<body class="p-4 sm:p-6 md:p-8">
 
-    <div class="max-w-7xl mx-auto">
-        <header class="mb-8">
-            <h1 class="text-3xl font-bold text-white">Gemini Trading Agent</h1>
-            <p class="text-gray-400">v1.6.0 - Canlı Performans Panosu</p>
-        </header>
+    <div id="toast-container"></div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div class="stat-card"><h2 class="text-gray-400 text-sm font-medium">Toplam P&L</h2><p id="total-pnl" class="text-2xl font-semibold mt-1">Yükleniyor...</p></div>
-            <div class="stat-card"><h2 class="text-gray-400 text-sm font-medium">Kazanma Oranı</h2><p id="win-rate" class="text-2xl font-semibold mt-1">Yükleniyor...</p></div>
-            <div class="stat-card"><h2 class="text-gray-400 text-sm font-medium">Kazanan / Kaybeden</h2><p id="win-loss-count" class="text-2xl font-semibold mt-1">Yükleniyor...</p></div>
-            <div class="stat-card"><h2 class="text-gray-400 text-sm font-medium">Toplam İşlem</h2><p id="total-trades" class="text-2xl font-semibold mt-1">Yükleniyor...</p></div>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-            <div class="lg:col-span-2 stat-card">
-                 <h2 class="text-lg font-semibold text-white mb-4">Kümülatif P&L Zaman Çizelgesi</h2>
-                 <div class="relative h-80">
-                    <canvas id="pnlChart"></canvas>
-                 </div>
-            </div>
-            <div class="stat-card">
-                <h2 class="text-lg font-semibold text-white mb-4">Aktif Pozisyonlar</h2>
-                <div id="active-positions-list" class="space-y-4"><p>Yükleniyor...</p></div>
-            </div>
-        </div>
-
-        <div class="stat-card">
-            <h2 class="text-lg font-semibold text-white mb-4">İşlem Geçmişi</h2>
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr>
-                            <th>Sembol</th><th>Yön</th><th>Giriş Fiyatı</th><th>Kapanış Fiyatı</th><th>P&L (USDT)</th><th>Durum</th><th>Kapanış Zamanı</th>
-                        </tr>
-                    </thead>
-                    <tbody id="trade-history-body">
-                        <tr><td colspan="7" class="text-center p-8">Yükleniyor...</td></tr>
-                    </tbody>
-                </table>
+    <div id="opportunity-modal" class="modal fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden opacity-0">
+        <div class="modal-content card max-w-lg w-full transform scale-95">
+            <h2 class="text-2xl font-bold text-white mb-4">📈 Al/Sat Tavsiyesi Bulundu!</h2>
+            <div id="opportunity-details" class="space-y-2 mb-6"></div>
+            <div class="flex justify-end gap-4">
+                <button id="cancel-opportunity-btn" class="btn btn-gray">İptal Et</button>
+                <button id="confirm-opportunity-btn" class="btn btn-green">İşlemi Onayla</button>
             </div>
         </div>
     </div>
+    
+    <div id="reanalysis-modal" class="modal fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden opacity-0">
+        <div class="modal-content card max-w-lg w-full transform scale-95">
+            <h2 class="text-2xl font-bold text-white mb-4">🔄 Pozisyon Yeniden Analiz Raporu</h2>
+            <div id="reanalysis-details" class="space-y-2 mb-6 text-slate-300">
+                </div>
+            <div id="reanalysis-actions" class="flex justify-end gap-4">
+                </div>
+        </div>
+    </div>
+    
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8 flex justify-between items-center flex-wrap gap-4">
+            <div>
+                <h1 class="text-3xl font-bold text-white">🤖 Gemini Trading Agent Dashboard</h1>
+                <p class="text-slate-400 mt-1">Botunuzun anlık performansını ve işlem geçmişini takip edin.</p>
+            </div>
+            <a href="/logout" class="btn btn-red">Çıkış Yap</a>
+        </header>
 
-    <script>
-        let pnlChartInstance = null;
+        <div id="dashboard-content">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                <div class="card"><h3 class="text-sm font-medium text-slate-400">Toplam P&L</h3><p id="total-pnl" class="mt-1 text-3xl font-semibold">0.00 USDT</p></div>
+                <div class="card"><h3 class="text-sm font-medium text-slate-400">Kazanma Oranı</h3><p id="win-rate" class="mt-1 text-3xl font-semibold text-white">0.00%</p></div>
+                <div class="card"><h3 class="text-sm font-medium text-slate-400">Toplam İşlem</h3><p id="total-trades" class="mt-1 text-3xl font-semibold text-white">0</p></div>
+            </div>
 
-        const formatCurrency = (value) => {
-            const num = parseFloat(value) || 0;
-            const colorClass = num >= 0 ? 'text-success' : 'text-danger';
-            return `<span class="${colorClass}">${num.toFixed(2)} USDT</span>`;
-        };
-        const formatPercentage = (value) => `${(parseFloat(value) || 0).toFixed(2)}%`;
-        
-        async function updateDashboard() {
-            try {
-                const response = await fetch('/api/data');
-                const data = await response.json();
-                if (data.error) { console.error("API Hatası:", data.error); return; }
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div class="card">
+                    <h2 class="text-xl font-semibold text-white mb-4">Manuel İşlem</h2>
+                    <form id="analysis-form" class="flex flex-col sm:flex-row items-end gap-4">
+                        <div class="w-full sm:w-auto flex-grow"><label for="symbol" class="block text-sm font-medium text-slate-300">Sembol</label><input type="text" id="symbol" name="symbol" required placeholder="örn: BTC" class="mt-1 block w-full rounded-md bg-slate-700 border-slate-600 text-white p-2"></div>
+                        <div class="w-full sm:w-auto flex-grow"><label for="timeframe" class="block text-sm font-medium text-slate-300">Zaman Aralığı</label><input type="text" id="timeframe" name="timeframe" value="15m" placeholder="15m, 1h" class="mt-1 block w-full rounded-md bg-slate-700 border-slate-600 text-white p-2"></div>
+                        <button type="submit" id="analysis-btn" class="btn btn-blue h-10 w-full sm:w-auto">Analiz Et</button>
+                    </form>
+                    <div id="analysis-status" class="mt-4 text-sm text-slate-400 min-h-[20px]"></div>
+                </div>
+                <div class="card">
+                    <h2 class="text-xl font-semibold text-white mb-4">Proaktif Tarama (Fırsat Avcısı)</h2>
+                    <div class="flex items-center justify-between">
+                        <div id="scan-status-container" class="text-slate-400 text-sm w-2/3">Bağlantı kuruluyor...</div>
+                        <button id="scan-btn" class="btn btn-green">Taramayı Başlat</button>
+                    </div>
+                </div>
+            </div>
 
-                const { stats, active_positions, trade_history, chart_data } = data;
-
-                document.getElementById('total-pnl').innerHTML = formatCurrency(stats.total_pnl);
-                document.getElementById('win-rate').innerText = formatPercentage(stats.win_rate);
-                document.getElementById('win-loss-count').innerHTML = `<span class="text-success">${stats.winning_trades}</span> / <span class="text-danger">${stats.losing_trades}</span>`;
-                document.getElementById('total-trades').innerText = stats.total_trades;
-
-                const activePositionsDiv = document.getElementById('active-positions-list');
-                activePositionsDiv.innerHTML = active_positions.length > 0 ? active_positions.map(pos => `
-                    <div class="p-4 rounded-lg border border-gray-700">
-                        <div class="flex justify-between items-center"><span class="font-bold text-white">${pos.symbol}</span><span class="px-2 py-1 text-xs rounded ${pos.side === 'buy' ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'}">${pos.side.toUpperCase()}</span></div>
-                        <div class="text-xs text-gray-400 mt-2"><p>Giriş: ${pos.entry_price.toFixed(4)}</p><p>SL: ${pos.stop_loss.toFixed(4)} | TP: ${pos.take_profit.toFixed(4)}</p></div>
-                    </div>`).join('') : '<p class="text-gray-400">Aktif pozisyon bulunmuyor.</p>';
-
-                const historyBody = document.getElementById('trade-history-body');
-                historyBody.innerHTML = trade_history.length > 0 ? trade_history.map(trade => `
-                    <tr>
-                        <td class="font-medium text-white">${trade.symbol}</td><td>${trade.side.toUpperCase()}</td><td>${trade.entry_price.toFixed(4)}</td><td>${trade.close_price.toFixed(4)}</td>
-                        <td>${formatCurrency(trade.pnl)}</td><td>${trade.status}</td><td class="text-gray-400">${new Date(trade.closed_at).toLocaleString('tr-TR')}</td>
-                    </tr>`).join('') : '<tr><td colspan="7" class="text-center p-8 text-gray-400">İşlem geçmişi bulunmuyor.</td></tr>';
-
-                updateChart(chart_data);
-            } catch (error) {
-                console.error('Dashboard güncellenirken hata oluştu:', error);
-            }
-        }
-
-        function updateChart(chart_data) {
-            const ctx = document.getElementById('pnlChart').getContext('2d');
-            
-            if (pnlChartInstance) {
-                pnlChartInstance.data.datasets[0].data = chart_data.points;
-                pnlChartInstance.update();
-            } else {
-                pnlChartInstance = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        datasets: [{
-                            label: 'Kümülatif P&L (USDT)',
-                            data: chart_data.points,
-                            borderColor: '#38bdf8',
-                            backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                            fill: true,
-                            tension: 0.2,
-                            pointRadius: 3,
-                            pointBackgroundColor: '#38bdf8'
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: { 
-                                type: 'time',
-                                time: { tooltipFormat: 'dd.MM.yyyy', unit: 'day' },
-                                grid: { color: '#374151' },
-                                ticks: { color: '#9ca3af', source: 'auto' }
-                            },
-                            y: { 
-                                grid: { color: '#374151' },
-                                ticks: { 
-                                    color: '#9ca3af',
-                                    callback: (value) => value + ' $'
-                                } 
-                            }
-                        },
-                        plugins: { legend: { display: false } }
-                    }
-                });
-            }
-        }
-        
-        document.addEventListener('DOMContentLoaded', () => {
-            updateDashboard();
-            setInterval(updateDashboard, 10000);
-        });
-    </script>
+            <div class="card mb-8"><h2 class="text-xl font-semibold text-white mb-4">P&L Zaman Çizelgesi</h2><div class="h-96"><canvas id="pnlChart"></canvas></div></div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div><h2 class="text-xl font-semibold text-white mb-4">Açık Pozisyonlar</h2><div id="open-positions-container" class="card overflow-x-auto"></div></div>
+                <div><h2 class="text-xl font-semibold text-white mb-4">İşlem Geçmişi</h2><div id="trade-history-container" class="card overflow-x-auto max-h-[600px]"></div></div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

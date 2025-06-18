@@ -1,6 +1,23 @@
-Değişiklik Günlüğü (Changelog)
+# Değişiklik Günlüğü (Changelog)
 Bu projede yapılan tüm önemli değişiklikler bu dosyada belgelenmektedir.
-Format, Keep a Changelog standardına dayanmaktadır.
+Format, [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) standardına dayanmaktadır.
+
+## [2.2.0] - 2025-06-18
+### Eklendi (Added)
+- **Gelişmiş Pozisyon Yönetimi:** Arka planda çalışan `check_and_manage_positions` fonksiyonuna, `config.py`'da etkinleştirilebilen **İz Süren Zarar Durdurma (Trailing Stop-Loss)** ve **Kısmi Kâr Alma (Partial Take-Profit)** stratejileri eklendi.
+- **İnteraktif Web Analizi:** Web arayüzündeki "Açık Pozisyonlar" tablosuna, her pozisyon için anlık yeniden analiz yapmayı sağlayan bir "Analiz" butonu ve sonuçları gösteren bir modal pencere eklendi.
+- **Tam Entegre Telegram Botu:** `telegram_bot.py` modülü, projenin `core` ve `database` modülleriyle doğrudan iletişim kuracak, `asyncio` uyumluluk sorunları giderilmiş, modern ve stabil bir yapıya kavuşturuldu.
+
+### Değiştirildi (Changed)
+- **Daha Esnek Analiz:** `get_technical_indicators` aracı, hesaplama sırasında `NaN` değeriyle karşılaştığında hata vermek yerine bu değeri `None` olarak kabul edip analizin devam etmesini sağlayacak şekilde güncellendi. `create_mta_analysis_prompt` fonksiyonu da bu `None` değerlerini işleyebilecek şekilde iyileştirildi.
+- **Modernleştirilmiş Araç Çağrıları:** `LangChain`'in yeni versiyonlarıyla uyumluluk ve `Pydantic` doğrulama hatalarını gidermek için, `@tool` ile işaretlenmiş tüm fonksiyonların (`get_technical_indicators`, `execute_trade_order` vb.) `.invoke()` metoduyla çağrılması sağlandı.
+
+### Düzeltildi (Fixed)
+- **Telegram `RuntimeError` Hatası:** `telegram_bot.py`'ın ayrı bir `thread` içinde çalışırken `RuntimeError: There is no current event loop` ve `Cannot close a running event loop` hataları vermesine neden olan `asyncio` olay döngüsü çakışması, kütüphanenin temel asenkron fonksiyonları kullanılarak tamamen giderildi.
+- **LangChain `ValidationError` Hatası:** Ajanın veya programın, girdi olarak sözlük bekleyen araçlara metin (`string`) veya yanlış formatta sözlük göndermesinden kaynaklanan tüm `pydantic.ValidationError` hataları, araçların girdi işleme mantığı ve çağırma yöntemleri iyileştirilerek düzeltildi.
+- **Telegram Bildirim Formatı:** Düşük değerli coin'lerde (`1000WHY/USDT` gibi) fiyatların bildirimde `0.0000` olarak görünmesine neden olan ondalık basamak yuvarlama sorunu, `notifications.py` dosyasında formatlayıcı hassasiyeti artırılarak (`.8f`) çözüldü.
+- **`get_top_gainers_losers` Hatası:** Bu aracın doğrudan çağrılmasının neden olduğu `'int' object has no attribute 'parent_run_id'` hatası, aracın `.invoke()` metoduyla çağrılması sağlanarak giderildi.
+- **`NameError` Hatası:** `dashboard/app.py` dosyasında `database` modülünün import edilmemesinden kaynaklanan `NameError` hatası, eksik olan `import database` satırı eklenerek düzeltildi.
 
 [1.9.1] - 2025-06-17
 Bu, botun stabilitesini ve verimliliğini artıran bir bakım sürümüdür. Özellikle proaktif tarama modülündeki tekrarlayan hatalar hedeflenmiştir.
