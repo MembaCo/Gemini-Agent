@@ -1,4 +1,5 @@
 // dashboard/static/js/dashboard.js
+// @author: Memba Co.
 
 document.addEventListener('DOMContentLoaded', function () {
     const socket = io();
@@ -22,6 +23,9 @@ document.addEventListener('DOMContentLoaded', function () {
         opportunityDetails: document.getElementById('opportunity-details'),
         confirmOpportunityBtn: document.getElementById('confirm-opportunity-btn'),
         cancelOpportunityBtn: document.getElementById('cancel-opportunity-btn'),
+        reanalysisModal: document.getElementById('reanalysis-modal'),
+        reanalysisDetails: document.getElementById('reanalysis-details'),
+        reanalysisActions: document.getElementById('reanalysis-actions'),
         toastContainer: document.getElementById('toast-container')
     };
 
@@ -43,7 +47,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     socket.on('scan_status', (data) => {
         elements.scanStatusContainer.innerHTML = `<p>${data.message}</p>`;
-        if (data.message.includes('Tamamlandı') || data.message.includes('Başlatılıyor')) {
+        if (data.message.includes('Tamamlandı') || data.message.includes('Başlatılıyor') || data.message.includes('bekleniyor')) {
             elements.scanBtn.disabled = false;
         } else {
             elements.scanBtn.disabled = true;
@@ -55,17 +59,41 @@ document.addEventListener('DOMContentLoaded', function () {
         showOpportunityModal(opportunity);
     });
     
+    socket.on('reanalysis_result', (result) => {
+        if (result.status === 'success') {
+            showReanalysisModal(result.data);
+        } else {
+            showToast(`Analiz başarısız: ${result.message}`, 'error');
+        }
+    });
+
     socket.on('toast', (data) => {
         showToast(data.message, data.type);
     });
 
     // --- Olay Yönlendiricileri (Event Handlers) ---
     elements.analysisForm.addEventListener('submit', handleAnalysisFormSubmit);
+    
     elements.scanBtn.addEventListener('click', () => {
         elements.scanBtn.disabled = true;
         elements.scanStatusContainer.textContent = 'Tarama başlatılıyor...';
         socket.emit('start_scan');
     });
+
+    elements.openPositionsContainer.addEventListener('click', function(e) {
+        const button = e.target.closest('button[data-action]');
+        if (!button) return;
+    
+        const symbol = button.dataset.symbol;
+        const action = button.dataset.action;
+    
+        if (action === 'close') {
+            handleClosePosition(symbol); // Varsayılan olarak onay sorar
+        } else if (action === 'reanalyze') {
+            handleReanalyzePosition(symbol);
+        }
+    });
+    
     elements.confirmOpportunityBtn.addEventListener('click', handleConfirmOpportunity);
     elements.cancelOpportunityBtn.addEventListener('click', hideOpportunityModal);
 
@@ -73,14 +101,12 @@ document.addEventListener('DOMContentLoaded', function () {
     function updateDashboard(data) {
         if (!data) return;
         
-        // İstatistikleri güncelle
         const pnlValue = parseFloat(data.stats.total_pnl.replace(',', ''));
         elements.totalPnl.textContent = `${data.stats.total_pnl} USDT`;
         elements.totalPnl.className = `mt-1 text-3xl font-semibold ${pnlValue >= 0 ? 'positive-pnl' : 'negative-pnl'}`;
         elements.winRate.textContent = `${data.stats.win_rate}%`;
         elements.totalTrades.textContent = data.stats.total_trades;
 
-        // Tabloları ve grafiği güncelle
         renderOpenPositions(data.open_positions);
         renderTradeHistory(data.trade_history);
         updateChart(data.pnl_timeline);
@@ -90,7 +116,6 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!positions || positions.length === 0) {
             elements.openPositionsContainer.innerHTML = '<p class="text-center text-slate-400">Yönetilen açık pozisyon bulunmuyor.</p>'; return;
         }
-        // GÜNCELLEME: "Analiz" butonu eklendi.
         elements.openPositionsContainer.innerHTML = `<table class="min-w-full divide-y divide-slate-700">
             <thead class="table-header"><tr>
                 <th class="px-4 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Sembol</th>
@@ -127,31 +152,40 @@ document.addEventListener('DOMContentLoaded', function () {
                 <td class="px-4 py-4 whitespace-nowrap text-sm text-slate-300">${new Date(trade.closed_at).toLocaleString()}</td></tr>`).join('')}
             </tbody></table>`;
     }
-    
-    // Açık pozisyonlar tablosundaki kapat butonları için olay dinleyicisi
-    elements.openPositionsContainer.addEventListener('click', function(e) {
-        const button = e.target.closest('button[data-action]');
-        if (!button) return;
-    
-        const symbol = button.dataset.symbol;
-        const action = button.dataset.action;
-    
-        if (action === 'close') {
-            handleClosePosition(symbol);
-        } else if (action === 'reanalyze') {
-            handleReanalyzePosition(symbol);
-        }
-    });
+
+    function updateChart(timelineData) {
+        if (pnlChart) pnlChart.destroy();
+        const ctx = elements.pnlChartCanvas.getContext('2d');
+        pnlChart = new Chart(ctx, { type: 'line', data: { datasets: [{
+                label: 'Kümülatif P&L (USDT)', data: timelineData,
+                borderColor: 'rgb(59, 130, 246)', backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                borderWidth: 2.5, tension: 0.4, fill: true, pointRadius: 2, pointBackgroundColor: 'rgb(59, 130, 246)'
+            }]}, options: { responsive: true, maintainAspectRatio: false, scales: {
+                x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(51, 65, 85, 0.5)' } },
+                y: { beginAtZero: false, ticks: { color: '#94a3b8', callback: v => v + ' $' }, grid: { color: 'rgba(51, 65, 85, 0.5)' } }
+            }, plugins: { legend: { labels: { color: '#e2e8f0' } } } } });
+    }
 
     // --- Yardımcı Fonksiyonlar ---
-    async function handleClosePosition(symbol) {
-        if (!confirm(`${symbol} pozisyonunu kapatmak istediğinizden emin misiniz?`)) return;
+    async function handleClosePosition(symbol, skip_confirmation = false) {
+        if (!skip_confirmation && !confirm(`${symbol} pozisyonunu kapatmak istediğinizden emin misiniz?`)) {
+            return;
+        }
         try {
-            const response = await fetch('/api/close-position', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol }) });
+            const response = await fetch('/api/close-position', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ symbol }) 
+            });
             const result = await response.json();
             showToast(result.message, result.status);
-            // Veri yenilemesi socket.emit ile sunucu tarafından tetiklenecek.
-        } catch (error) { showToast('Pozisyon kapatılırken hata oluştu.', 'error'); }
+        } catch (error) { 
+            showToast('Pozisyon kapatılırken bir ağ hatası oluştu.', 'error'); 
+        }
+    }
+
+    function handleReanalyzePosition(symbol) {
+        socket.emit('reanalyze_position', { symbol: symbol });
     }
 
     async function handleAnalysisFormSubmit(e) {
@@ -171,9 +205,9 @@ document.addEventListener('DOMContentLoaded', function () {
             const result = await response.json();
             showToast(result.message, result.status);
             const iconMap = {success:'✅', error:'❌', info:'ℹ️'};
-            elements.analysisStatus.textContent = `${iconMap[result.status]} ${result.message}`;
+            elements.analysisStatus.textContent = `${iconMap[result.status] || 'ℹ️'} ${result.message}`;
             const classMap = {success:'positive-pnl', error:'negative-pnl', info:'info-text'};
-            elements.analysisStatus.className = `mt-4 text-sm ${classMap[result.status]}`;
+            elements.analysisStatus.className = `mt-4 text-sm ${classMap[result.status] || 'info-text'}`;
         } catch (error) {
             elements.analysisStatus.textContent = '❌ Analiz sırasında bir ağ hatası oluştu.';
             elements.analysisStatus.className = 'mt-4 text-sm negative-pnl';
@@ -190,7 +224,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function showToast(message, type = 'info') {
         const toast = document.createElement('div');
-        toast.className = `toast toast-${type}`;
+        const toastType = ['success', 'error', 'info'].includes(type) ? type : 'info';
+        toast.className = `toast toast-${toastType}`;
         toast.textContent = message;
         elements.toastContainer.appendChild(toast);
         setTimeout(() => toast.classList.add('show'), 100);
@@ -200,6 +235,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }, 5000);
     }
     
+    // --- Modal Yönetim Fonksiyonları ---
     function showOpportunityModal(opportunity) {
         elements.opportunityDetails.innerHTML = `
             <p><span class="font-semibold text-slate-300">Sembol:</span> ${opportunity.symbol}</p>
@@ -215,6 +251,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function hideOpportunityModal() {
+        if (elements.opportunityModal.classList.contains('hidden')) return;
         elements.opportunityModal.classList.remove('opacity-100');
         elements.opportunityModal.querySelector('.modal-content').classList.remove('scale-100');
         setTimeout(() => {
@@ -223,91 +260,45 @@ document.addEventListener('DOMContentLoaded', function () {
         }, 250);
     }
 
-    function updateChart(timelineData) {
-        if (pnlChart) pnlChart.destroy();
-        const ctx = elements.pnlChartCanvas.getContext('2d');
-        pnlChart = new Chart(ctx, { type: 'line', data: { datasets: [{
-                label: 'Kümülatif P&L (USDT)', data: timelineData,
-                borderColor: 'rgb(59, 130, 246)', backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                borderWidth: 2.5, tension: 0.4, fill: true, pointRadius: 2, pointBackgroundColor: 'rgb(59, 130, 246)'
-            }]}, options: { responsive: true, maintainAspectRatio: false, scales: {
-                x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(51, 65, 85, 0.5)' } },
-                y: { beginAtZero: false, ticks: { color: '#94a3b8', callback: v => v + ' $' }, grid: { color: 'rgba(51, 65, 85, 0.5)' } }
-            }, plugins: { legend: { labels: { color: '#e2e8f0' } } } } });
+    function showReanalysisModal(data) {
+        elements.reanalysisDetails.innerHTML = `
+            <p><span class="font-semibold text-white">Sembol:</span> ${data.symbol}</p>
+            <p><span class="font-semibold text-white">Tavsiye:</span> <span class="font-bold ${data.recommendation === 'KAPAT' ? 'negative-pnl' : 'positive-pnl'}">${data.recommendation}</span></p>
+            <p class="text-sm mt-2"><span class="font-semibold text-white">Gerekçe:</span> ${data.reason}</p>
+        `;
+
+        elements.reanalysisActions.innerHTML = ''; 
+
+        if (data.recommendation === 'KAPAT') {
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'btn btn-red';
+            closeBtn.textContent = 'Pozisyonu Kapat';
+            closeBtn.onclick = () => {
+                handleClosePosition(data.symbol, true); // Onay penceresini atla
+                hideReanalysisModal();
+            };
+            elements.reanalysisActions.appendChild(closeBtn);
+        }
+
+        const okBtn = document.createElement('button');
+        okBtn.className = 'btn btn-gray';
+        okBtn.textContent = 'Tamam';
+        okBtn.onclick = hideReanalysisModal;
+        elements.reanalysisActions.appendChild(okBtn);
+
+        elements.reanalysisModal.classList.remove('hidden');
+        setTimeout(() => {
+            elements.reanalysisModal.classList.add('opacity-100');
+            elements.reanalysisModal.querySelector('.modal-content').classList.add('scale-100');
+        }, 10);
     }
 
-    // SocketIO olay dinleyicisi (mevcut olanın içine ekleyin veya yeni oluşturun)
-socket.on('reanalysis_result', (result) => {
-    if (result.status === 'success') {
-        showReanalysisModal(result.data);
-    } else {
-        showToast(`Analiz başarısız: ${result.message}`, 'error');
+    function hideReanalysisModal() {
+        if (elements.reanalysisModal.classList.contains('hidden')) return;
+        elements.reanalysisModal.classList.remove('opacity-100');
+        elements.reanalysisModal.querySelector('.modal-content').classList.remove('scale-100');
+        setTimeout(() => {
+            elements.reanalysisModal.classList.add('hidden');
+        }, 250);
     }
-});
-
-// Yeniden analiz isteğini sunucuya gönderen fonksiyon
-function handleReanalyzePosition(symbol) {
-    showToast(`'${symbol}' yeniden analiz ediliyor... Lütfen bekleyin.`, 'info');
-    socket.emit('reanalyze_position', { symbol: symbol });
-}
-
-// Yeniden analiz modal'ını gösteren ve içeriğini dolduran fonksiyon
-function showReanalysisModal(data) {
-    const detailsContainer = document.getElementById('reanalysis-details');
-    const actionsContainer = document.getElementById('reanalysis-actions');
-    const modal = document.getElementById('reanalysis-modal');
-
-    // Modal içeriğini doldur
-    detailsContainer.innerHTML = `
-        <p><span class="font-semibold text-white">Sembol:</span> ${data.symbol}</p>
-        <p><span class="font-semibold text-white">Tavsiye:</span> <span class="font-bold ${data.recommendation === 'KAPAT' ? 'negative-pnl' : 'positive-pnl'}">${data.recommendation}</span></p>
-        <p class="text-sm mt-2"><span class="font-semibold text-white">Gerekçe:</span> ${data.reason}</p>
-    `;
-
-    // Aksiyon butonlarını temizle ve yeniden oluştur
-    actionsContainer.innerHTML = ''; 
-
-    // "KAPAT" tavsiyesi varsa, pozisyonu kapatma butonu ekle
-    if (data.recommendation === 'KAPAT') {
-        const closeBtn = document.createElement('button');
-        closeBtn.className = 'btn btn-red';
-        closeBtn.textContent = 'Pozisyonu Kapat';
-        closeBtn.onclick = () => {
-            handleClosePosition(data.symbol);
-            hideReanalysisModal();
-        };
-        actionsContainer.appendChild(closeBtn);
-    }
-
-    // Her zaman bir "Tamam" butonu ekle
-    const okBtn = document.createElement('button');
-    okBtn.className = 'btn btn-gray';
-    okBtn.textContent = 'Tamam';
-    okBtn.onclick = hideReanalysisModal;
-    actionsContainer.appendChild(okBtn);
-
-    // Modal'ı göster
-    modal.classList.remove('hidden');
-    setTimeout(() => {
-        modal.classList.add('opacity-100');
-        modal.querySelector('.modal-content').classList.add('scale-100');
-    }, 10);
-}
-
-// Yeniden analiz modal'ını gizleyen fonksiyon
-function hideReanalysisModal() {
-    const modal = document.getElementById('reanalysis-modal');
-    modal.classList.remove('opacity-100');
-    modal.querySelector('.modal-content').classList.remove('scale-100');
-    setTimeout(() => {
-        modal.classList.add('hidden');
-    }, 250);
-}
-
-// Mevcut "handleClosePosition" fonksiyonunuzun dosyanızda olduğundan emin olun.
-async function handleClosePosition(symbol) {
-    if (!confirm(`${symbol} pozisyonunu kapatmak istediğinizden emin misiniz?`)) return;
-    // ... (mevcut kodunuz)
-}
-
 });

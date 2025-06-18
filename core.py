@@ -133,7 +133,6 @@ def open_new_position(rec: str, symbol: str, price: float, timeframe: str) -> di
         
         trade_side = "buy" if "AL" in rec.upper() else "sell"
         
-        # get_atr_value tek bir string argüman beklediği için bu çağrı doğru.
         atr_result = tools.get_atr_value.invoke(f"{symbol},{timeframe}")
         if atr_result.get("status") != "success":
             return {"status": "error", "message": f"ATR değeri alınamadı: {atr_result.get('message')}"}
@@ -142,7 +141,6 @@ def open_new_position(rec: str, symbol: str, price: float, timeframe: str) -> di
         stop_loss_price = price - sl_distance if trade_side == "buy" else price + sl_distance
         take_profit_price = price + (sl_distance * config.RISK_REWARD_RATIO_TP) if trade_side == "buy" else price - (sl_distance * config.RISK_REWARD_RATIO_TP)
 
-        # get_wallet_balance argüman beklemediği için bu çağrı doğru.
         balance_result = tools.get_wallet_balance.invoke({})
         wallet_balance = balance_result.get('balance', 0.0)
         risk_amount_usd = wallet_balance * (config.RISK_PER_TRADE_PERCENT / 100)
@@ -181,7 +179,6 @@ def close_position_by_symbol(symbol: str, reason: str = "MANUAL") -> dict:
     if not position: return {"status": "error", "message": f"{symbol} için yönetilen pozisyon bulunamadı."}
 
     logging.info(f"Kapatılacak pozisyon ({symbol}) için mevcut emirler iptal ediliyor...")
-    # cancel_all_open_orders tek bir string argüman beklediği için bu çağrı doğru.
     tools.cancel_all_open_orders.invoke(symbol)
     time.sleep(0.5)
     
@@ -193,32 +190,6 @@ def close_position_by_symbol(symbol: str, reason: str = "MANUAL") -> dict:
     
     # DÜZELTME: Parametre sözlüğünü, 'params' anahtarı olan başka bir sözlük içine sardık.
     result = tools.execute_trade_order.invoke({"params": close_params})
-    
-    if "başarı" in result.lower() or "simülasyon" in result.lower():
-        closed_pos = database.remove_position(symbol)
-        if closed_pos:
-            current_price = tools._fetch_price_natively(closed_pos['symbol']) or closed_pos['entry_price']
-            pnl = tools.calculate_pnl(side=closed_pos.get('side'), entry_price=closed_pos.get('entry_price'), close_price=current_price, amount=closed_pos.get('amount'))
-            closed_pos['close_price'] = current_price
-            database.log_trade_to_history(closed_pos, current_price, reason)
-            message = format_close_position_message(closed_pos, pnl, reason)
-            send_telegram_message(message)
-        return {"status": "success", "message": f"{symbol} pozisyonu başarıyla kapatıldı."}
-    else:
-        return {"status": "error", "message": f"Pozisyon kapatılamadı: {result}"}
-    
-def close_position_by_symbol(symbol: str, reason: str = "MANUAL") -> dict:
-    position = next((p for p in database.get_all_positions() if p['symbol'] == symbol), None)
-    if not position: return {"status": "error", "message": f"{symbol} için yönetilen pozisyon bulunamadı."}
-
-    logging.info(f"Kapatılacak pozisyon ({symbol}) için mevcut emirler iptal ediliyor...")
-    tools.cancel_all_open_orders.invoke(symbol)
-    time.sleep(0.5)
-    
-    close_params = {
-        "symbol": symbol, "side": 'sell' if position['side'] == 'buy' else 'buy', "amount": position['amount']
-    }
-    result = tools.execute_trade_order.invoke(close_params)
     
     if "başarı" in result.lower() or "simülasyon" in result.lower():
         closed_pos = database.remove_position(symbol)
@@ -267,44 +238,34 @@ def _update_blacklist(blacklist: dict, status_callback = None) -> None:
             if status_callback: status_callback(message)
 
 def _get_scan_candidates(open_symbols: set, blacklist: dict, status_callback = None) -> list[str]:
-    """Taranacak nihai sembol listesini oluşturur ve detaylı loglama yapar."""
     symbols_to_scan = []
     
-    # Adım 1: Whitelist'i ekle
     whitelist_symbols = [tools._get_unified_symbol(s) for s in config.PROACTIVE_SCAN_WHITELIST if s]
     if whitelist_symbols:
         symbols_to_scan.extend(whitelist_symbols)
         message = f"INFO: Beyaz listeden {len(whitelist_symbols)} sembol eklendi."
         if status_callback: status_callback(message)
 
-    # Adım 2: Gainer/Loser listesini ekle
     if config.PROACTIVE_SCAN_USE_GAINERS_LOSERS:
         try:
             if status_callback: status_callback("INFO: En çok yükselen/düşenler listesi çekiliyor...")
-            
-            # --- DÜZELTME: Araç, .invoke() metodu ile çağrıldı. ---
-            # Parametreler, anahtarları fonksiyon argüman isimleriyle eşleşen bir sözlük içinde verilir.
             params = {"top_n": config.PROACTIVE_SCAN_TOP_N, "min_volume_usdt": config.PROACTIVE_SCAN_MIN_VOLUME_USDT}
             gainer_loser_list = tools.get_top_gainers_losers.invoke(params)
             
-            # gainer_loser_list'in bir liste olduğunu varsayarak devam ediyoruz.
             if isinstance(gainer_loser_list, list) and gainer_loser_list:
                 gainer_loser_symbols = [item['symbol'] for item in gainer_loser_list]
                 symbols_to_scan.extend(gainer_loser_symbols)
                 message = f"INFO: Yükselen/düşenler listesinden {len(gainer_loser_symbols)} sembol eklendi."
                 if status_callback: status_callback(message)
             else:
-                # Hata durumunda veya boş liste döndüğünde logla
                 log_message = f"UYARI: Yükselen/düşenler listesi boş veya geçersiz bir formatta döndü: {gainer_loser_list}"
                 logging.warning(log_message)
                 if status_callback: status_callback(log_message)
-
         except Exception as e:
             message = f"HATA: Yükselen/Düşenler listesi alınamadı: {e}"
-            logging.error(message, exc_info=True) # Hatanın detayını görmek için exc_info eklendi.
+            logging.error(message, exc_info=True)
             if status_callback: status_callback(f"⚠️ {message}")
             
-    # Adım 3: Tekilleştir ve filtrele
     initial_count = len(symbols_to_scan)
     unique_symbols = set(symbols_to_scan)
     if status_callback: status_callback(f"INFO: Toplam {initial_count} aday sembol {len(unique_symbols)} tekil sembole düşürüldü.")
@@ -368,10 +329,6 @@ def run_proactive_scanner(opportunity_callback, status_callback):
     status_callback("--- ✅ Proaktif Tarama Döngüsü Tamamlandı ✅ ---")
 
 def check_and_manage_positions():
-    """
-    Açık pozisyonları kontrol eder ve Kısmi Kâr Alma, İz Süren Zarar Durdurma gibi
-    gelişmiş risk yönetimi stratejilerini uygular.
-    """
     try:
         exchange_positions_raw = tools.get_open_positions_from_exchange.invoke({})
     except Exception as e:
@@ -391,7 +348,7 @@ def check_and_manage_positions():
 
         if not exchange_pos:
             logging.warning(f"Pozisyon '{symbol}' veritabanında var ama borsada yok. Veritabanından siliniyor.")
-            database.log_trade_to_history(db_pos, db_pos.get('entry_price'), "SYNC_CLOSED") # Geçmişe SYNC olarak kaydet
+            database.log_trade_to_history(db_pos, db_pos.get('entry_price'), "SYNC_CLOSED")
             database.remove_position(symbol)
             continue
 
@@ -402,59 +359,43 @@ def check_and_manage_positions():
             initial_sl = db_pos.get("initial_stop_loss")
             pos_amount = db_pos.get("amount")
             
-            # --- 1. KISMİ KÂR ALMA (PARTIAL TAKE-PROFIT) KONTROLÜ ---
             if config.USE_PARTIAL_TP and not db_pos.get('partial_tp_executed'):
                 risk_per_unit = abs(entry_price - initial_sl)
                 partial_tp_price = entry_price + (risk_per_unit * config.PARTIAL_TP_TARGET_RR) if side == 'buy' else entry_price - (risk_per_unit * config.PARTIAL_TP_TARGET_RR)
 
-                if (side == 'buy' and current_price >= partial_tp_price) or \
-                   (side == 'sell' and current_price <= partial_tp_price):
-                    
+                if (side == 'buy' and current_price >= partial_tp_price) or (side == 'sell' and current_price <= partial_tp_price):
                     logging.info(f"PARTIAL TP TETİKLENDİ: {symbol} için kısmi kâr alma hedefine ulaşıldı.")
-                    
                     close_amount = pos_amount * (config.PARTIAL_TP_CLOSE_PERCENT / 100)
                     remaining_amount = pos_amount - close_amount
                     
-                    # Kısmi kapatma emrini gönder
-                    close_side = 'sell' if side == 'buy' else 'buy'
-                    partial_close_params = {"symbol": symbol, "side": close_side, "amount": close_amount}
+                    partial_close_params = {"symbol": symbol, "side": 'sell' if side == 'buy' else 'buy', "amount": close_amount}
                     tools.execute_trade_order.invoke({"params": partial_close_params})
                     
-                    # Kalan pozisyonun SL'ini başa baş (breakeven) noktasına çek
                     new_sl_price = entry_price
                     update_sl_params = {"symbol": symbol, "side": side, "amount": remaining_amount, "new_stop_price": new_sl_price}
                     tools.update_stop_loss_order.invoke({"params": update_sl_params})
                     
-                    # Veritabanını güncelle
                     realized_pnl = abs(current_price - entry_price) * close_amount
                     database.update_position_after_partial_tp(symbol, remaining_amount, new_sl_price, realized_pnl)
                     
-                    # Bildirim gönder
                     notif_message = f"PARTIAL TP: {symbol} pozisyonunun %{config.PARTIAL_TP_CLOSE_PERCENT} kadarı kapatıldı. SL giriş fiyatına çekildi."
                     send_telegram_message(notif_message)
                     logging.info(notif_message)
-                    continue # Bu döngüyü bu pozisyon için bitir
+                    continue
 
-            # --- 2. İZ SÜREN ZARAR DURDURMA (TRAILING STOP-LOSS) KONTROLÜ ---
             if config.USE_TRAILING_STOP_LOSS:
                 sl_price = db_pos.get("stop_loss", 0.0)
                 activation_price = entry_price * (1 + (config.TRAILING_STOP_ACTIVATION_PERCENT / 100)) if side == 'buy' else entry_price * (1 - (config.TRAILING_STOP_ACTIVATION_PERCENT / 100))
                 
-                if (side == 'buy' and current_price > activation_price) or \
-                   (side == 'sell' and current_price < activation_price):
-                    
+                if (side == 'buy' and current_price > activation_price) or (side == 'sell' and current_price < activation_price):
                     new_sl_candidate = current_price * (1 - (config.TRAILING_STOP_ACTIVATION_PERCENT / 100)) if side == 'buy' else current_price * (1 + (config.TRAILING_STOP_ACTIVATION_PERCENT / 100))
                     
-                    # Sadece SL'i lehimize hareket ettiriyorsak güncelle
-                    if (side == 'buy' and new_sl_candidate > sl_price) or \
-                       (side == 'sell' and new_sl_candidate < sl_price):
-                        
+                    if (side == 'buy' and new_sl_candidate > sl_price) or (side == 'sell' and new_sl_candidate < sl_price):
                         logging.info(f"TRAILING SL TETİKLENDİ: {symbol} için yeni SL: {new_sl_candidate:.8f}")
                         update_sl_params = {"symbol": symbol, "side": side, "amount": pos_amount, "new_stop_price": new_sl_candidate}
                         tools.update_stop_loss_order.invoke({"params": update_sl_params})
                         database.update_position_sl(symbol, new_sl_candidate)
 
-            # --- 3. STANDART TP/SL KONTROLÜ ---
             final_sl_price = db_pos.get("stop_loss", 0.0)
             final_tp_price = db_pos.get("take_profit", 0.0)
             
